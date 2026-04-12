@@ -5,10 +5,10 @@
 Create the Rust + Tauri + React/TypeScript application skeleton, persistence foundation, and local development workflow.
 
 ### Completion criteria
-- app launches reliably
-- command/event bridge works
-- SQLite database initializes and migrates
-- logging and error surfaces exist
+- [x] app launches reliably
+- [x] command/event bridge works
+- [x] SQLite database initializes and migrates
+- [x] logging and error surfaces exist
 
 ---
 
@@ -17,10 +17,10 @@ Create the Rust + Tauri + React/TypeScript application skeleton, persistence fou
 Register mounted local storage sources and preserve identity across restarts and remounts.
 
 ### Completion criteria
-- user can add/remove storage sources
-- sources show mount status
-- removable sources are recognized as offline/online
-- per-source quarantine path is defined
+- [x] user can add/remove storage sources
+- [x] sources show mount status
+- [x] removable sources are recognized as offline/online
+- [x] per-source quarantine path is defined
 
 ---
 

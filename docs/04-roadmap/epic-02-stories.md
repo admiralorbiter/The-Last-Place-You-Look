@@ -193,7 +193,7 @@ Add a `sources` slice to the store that:
 ---
 
 ## Epic 2 completion criteria (from epics.md)
-- [ ] user can add/remove storage sources
-- [ ] sources show mount status
-- [ ] removable sources are recognized as offline/online
-- [ ] per-source quarantine path is defined
+- [x] user can add/remove storage sources
+- [x] sources show mount status
+- [x] removable sources are recognized as offline/online
+- [x] per-source quarantine path is defined

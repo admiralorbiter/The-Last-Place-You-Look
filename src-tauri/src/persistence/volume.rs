@@ -17,8 +17,7 @@ pub fn resolve_volume_guid(path: &std::path::Path) -> Result<String, AppError> {
     unsafe {
         GetVolumeNameForVolumeMountPointW(
             windows::core::PCWSTR(wide.as_ptr()),
-            PWSTR(buf.as_mut_ptr()),
-            buf.len() as u32,
+            &mut buf,
         ).map_err(|e| AppError::PlatformError(e.to_string()))?;
     }
 

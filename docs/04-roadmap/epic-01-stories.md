@@ -165,7 +165,7 @@ Document how to run, build, and debug the app locally for your own future refere
 ---
 
 ## Epic 1 completion criteria (from epics.md)
-- [ ] app launches reliably
-- [ ] command/event bridge works
-- [ ] SQLite database initializes and migrates
-- [ ] logging and error surfaces exist
+- [x] app launches reliably
+- [x] command/event bridge works
+- [x] SQLite database initializes and migrates
+- [x] logging and error surfaces exist

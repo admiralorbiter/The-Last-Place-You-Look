@@ -4,7 +4,7 @@ pub mod persistence;
 pub mod services;
 pub mod errors;
 
-use tauri::Manager;
+use tauri::{Manager, Emitter};
 use std::sync::{Arc, Mutex};
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir().expect("failed to get app data dir");
             let conn = persistence::db::init_db(&app_data_dir).expect("failed to init db");

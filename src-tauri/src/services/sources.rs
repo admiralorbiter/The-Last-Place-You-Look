@@ -17,11 +17,10 @@ pub fn reconcile_mount_status(
         let mut buf = vec![0u16; 50];
         
         unsafe {
-            let handle = FindFirstVolumeW(PWSTR(buf.as_mut_ptr()), buf.len() as u32);
-            if handle.is_invalid() {
-                // If it fails, we assume no volumes are mounted (or skip reconciliation)
-                return Ok(());
-            }
+            let handle = match FindFirstVolumeW(&mut buf) {
+                Ok(h) => h,
+                Err(_) => return Ok(()), // If it fails, assume no volumes or skip
+            };
 
             loop {
                 let guid = String::from_utf16_lossy(&buf).trim_end_matches('\0').to_string();
@@ -31,8 +30,7 @@ pub fn reconcile_mount_status(
                 let mut return_len = 0;
                 let has_paths = GetVolumePathNamesForVolumeNameW(
                     windows::core::PCWSTR(buf.as_ptr()),
-                    PWSTR(path_buf.as_mut_ptr()),
-                    path_buf.len() as u32,
+                    Some(&mut path_buf),
                     &mut return_len
                 ).is_ok();
                 
@@ -44,7 +42,7 @@ pub fn reconcile_mount_status(
                 }
 
                 buf.fill(0);
-                if FindNextVolumeW(handle, PWSTR(buf.as_mut_ptr()), buf.len() as u32).is_err() {
+                if FindNextVolumeW(handle, &mut buf).is_err() {
                     break;
                 }
             }

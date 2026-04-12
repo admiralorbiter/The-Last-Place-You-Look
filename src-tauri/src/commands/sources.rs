@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 use rusqlite::{params, Connection};
-use tauri::{State, AppHandle, Manager};
+use tauri::State;
 use uuid::Uuid;
 use chrono::Utc;
 

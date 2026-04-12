@@ -16,15 +16,15 @@ No calendar dates are tracked here. Phases are ordered by dependency and value d
 The app launches. A user can register mounted local drives. The command/event bridge, database, logging, and dev workflow all function correctly.
 
 ### Done when
-- Tauri v2 + React/TypeScript app launches on Windows
-- SQLite initializes and migrates via rusqlite_migration
-- At least one Tauri command round-trips from frontend to Rust backend and back
-- Structured error responses cross the command bridge
-- A user can add and remove storage sources
-- Registered sources show correct mount status on startup
-- Volume GUID is used as stable source identity
-- Per-source quarantine path is defined and stored
-- Offline/online source state is visible in UI
+- [x] Tauri v2 + React/TypeScript app launches on Windows
+- [x] SQLite initializes and migrates via rusqlite_migration
+- [x] At least one Tauri command round-trips from frontend to Rust backend and back
+- [x] Structured error responses cross the command bridge
+- [x] A user can add and remove storage sources
+- [x] Registered sources show correct mount status on startup
+- [x] Volume GUID is used as stable source identity
+- [x] Per-source quarantine path is defined and stored
+- [x] Offline/online source state is visible in UI
 
 ### Dependency note
 All subsequent phases depend on Phase 0. Do not begin Phase 1 until source registration and the data model are stable. The schema established here must support the file instance model from Epic 3.

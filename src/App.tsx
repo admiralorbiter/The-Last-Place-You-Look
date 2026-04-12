@@ -14,16 +14,21 @@ function App() {
   const { appReady, appVersion, dbStatus, setAppReady, setAppVersion, setDbStatus } = useAppStore();
 
   useEffect(() => {
-    const unlisten = listen("app://ready", async () => {
-      setAppReady(true);
+    const fetchInfo = async () => {
       try {
         const info = await invoke<AppInfo>("get_app_info");
+        setAppReady(true);
         setAppVersion(info.version);
         setDbStatus(info.db_status);
       } catch (e) {
         console.error("Failed to get app info:", e);
       }
-    });
+    };
+
+    // Call immediately since the backend `setup` might have emitted the event before React loaded.
+    fetchInfo();
+
+    const unlisten = listen("app://ready", fetchInfo);
 
     return () => {
       unlisten.then(f => f());
