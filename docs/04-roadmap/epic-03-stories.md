@@ -157,9 +157,26 @@ Standard OS traversal (`ReadDirectoryChanges`, `FindFirstFile`) on a 6.54 TB mec
 
 ---
 
+## Story 3.6: Rescan Synchronization (Change & Removal Detection) ✅ DONE
+
+### What
+Ensure that subsequent scans of an already-cataloged source accurately capture changes (edits) and removals (deletions), without falsely claiming a removed disk was completely deleted.
+
+### Implemented
+- **Change Detection (Modified files):** Uses SQLite `UPSERT` (`ON CONFLICT DO UPDATE`). When a file matches an existing `source_id` + `volume_relative_path`, it compares the incoming `size_bytes` and `modified_at`. If either changed, it updates the record and sets `blake3_hash`, `stage_2_at`, and `stage_3_at` to `NULL`, flagging it for re-hashing.
+- **Deletion Detection (Removed files):** Uses the "Mark and Sweep" algorithm. In the final seconds of a successful scan, one single `UPDATE` query soft-deletes (`deleted_at = NOW()`) every file on the source whose `stage_1_at` timestamp is older than the scan's start time.
+- **Disappearance Safety:** If a source is temporarily disconnected, it cannot be scanned, meaning a successful scan never runs on it while offline, preventing accidental mass false-deletions.
+
+### Done when
+- [x] Edited files are updated and stripped of stale hashes
+- [x] Missing files are soft-deleted from the catalog without DB iteration bottlenecks
+- [x] Reappearing files are seamlessly restored (`deleted_at = NULL`)
+
+---
+
 ## Epic 3 completion criteria (from epics.md)
 
 - [x] Stage 1 inventory produces visible library records quickly
 - [x] Progress is visible by source
-- [ ] Rescans update existing catalog state *(rescan deduplication via INSERT OR IGNORE is implemented; changed-file detection is Epic 3 follow-on)*
-- [ ] Source disappearance does not destroy catalog knowledge *(soft-delete via `deleted_at` is in schema; rescan detection not yet wired)*
+- [x] Rescans update existing catalog state (UPSERT + Mark and Sweep implemented)
+- [x] Source disappearance does not destroy catalog knowledge (schema and offline protections in place)

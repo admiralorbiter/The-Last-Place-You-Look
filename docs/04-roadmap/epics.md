@@ -31,8 +31,8 @@ Build fast inventory-first scanning with background enrichment.
 ### Completion criteria
 - [x] stage 1 inventory produces visible library records quickly
 - [x] progress is visible by source (live file count, bytes, animated % bar)
-- [ ] rescans detect changed and removed files (schema supports it; logic not yet wired)
-- [ ] source disappearance does not destroy catalog knowledge (soft-delete field exists; rescan wiring pending)
+- [x] rescans detect changed and removed files (UPSERT change detection, Mark and Sweep soft-deletion)
+- [x] source disappearance does not destroy catalog knowledge (soft-delete field `deleted_at` ensures preservation)
 
 ### Optional extension (post-MVP)
 - Fast Scan via NTFS MFT read (requires UAC elevation; ~10–20× faster on mechanical HDDs). See Story 3.5 in epic-03-stories.md.

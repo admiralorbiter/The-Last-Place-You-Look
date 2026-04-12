@@ -44,7 +44,7 @@ Scanning works. A user can start a scan on registered sources and browse the res
 - [ ] Library search works across cataloged items *(Epic 4)*
 - [ ] Filter by type, source, and basic attributes works *(Epic 4)*
 - [ ] Offline items remain in library with clear status *(Epic 4)*
-- [ ] Rescan detects new, changed, and removed files without destroying existing catalog state
+- [x] Rescan detects new, changed, and removed files without destroying existing catalog state
 - [x] Temporarily offline sources do not trigger catalog data deletion *(INSERT OR IGNORE + soft-delete field)*
 
 ### Dependency note

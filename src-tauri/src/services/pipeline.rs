@@ -110,8 +110,9 @@ pub async fn start_scan(app: AppHandle, source_id: String) -> Result<ScanJob, Ap
     let app_clone = app.clone();
     let db_path_clone = db_path.clone();
     
+    let started_at_clone = started_at.clone();
     tokio::task::spawn_blocking(move || {
-        stage_1_worker(app_clone, db_path_clone, job_id, source_id_clone, mount_path, total_used, source_kind);
+        stage_1_worker(app_clone, db_path_clone, job_id, source_id_clone, mount_path, total_used, source_kind, started_at_clone);
     });
 
     Ok(job)
@@ -140,7 +141,7 @@ fn get_drive_used_space(mount_path: &str) -> u64 {
     total_number_of_bytes.saturating_sub(total_number_of_free_bytes)
 }
 
-fn stage_1_worker(app: AppHandle, db_path: PathBuf, job_id: String, source_id: String, mount_path: String, total_used_bytes: u64, source_kind: String) {
+fn stage_1_worker(app: AppHandle, db_path: PathBuf, job_id: String, source_id: String, mount_path: String, total_used_bytes: u64, source_kind: String, started_at: String) {
     let pipeline = app.state::<PipelineManager>();
 
     // ── DB writer thread ──────────────────────────────────────────────────────
@@ -236,6 +237,13 @@ fn stage_1_worker(app: AppHandle, db_path: PathBuf, job_id: String, source_id: S
         *found_w.lock().unwrap() = total_found;
         *inserted_w.lock().unwrap() = total_inserted;
         *bytes_w.lock().unwrap() = total_bytes;
+
+        // Perform Mark and Sweep: Soft-delete anything we didn't touch this scan
+        let sweep_now = Utc::now().to_rfc3339();
+        let _ = conn.execute(
+            "UPDATE file_instances SET deleted_at = ?1 WHERE source_id = ?2 AND (stage_1_at < ?3 OR stage_1_at IS NULL) AND deleted_at IS NULL",
+            rusqlite::params![sweep_now, source_id_writer, started_at],
+        );
 
         // Final job update
         let completed_at = Utc::now().to_rfc3339();
@@ -368,10 +376,20 @@ fn insert_batch(conn: &mut Connection, batch: &[FileRecord]) -> Result<i32, rusq
         }).collect();
         
         let sql = format!(
-            "INSERT OR IGNORE INTO file_instances \
+            "INSERT INTO file_instances \
              (id, source_id, stable_location_id, volume_relative_path, current_path, \
               file_name, extension, size_bytes, modified_at, created_at_fs, stage_1_at) \
-             VALUES {}",
+             VALUES {} \
+             ON CONFLICT(source_id, volume_relative_path) DO UPDATE SET \
+                current_path = excluded.current_path, \
+                stage_1_at = excluded.stage_1_at, \
+                deleted_at = NULL, \
+                blake3_hash = CASE WHEN file_instances.size_bytes != excluded.size_bytes OR file_instances.modified_at != excluded.modified_at THEN NULL ELSE file_instances.blake3_hash END, \
+                stage_2_at = CASE WHEN file_instances.size_bytes != excluded.size_bytes OR file_instances.modified_at != excluded.modified_at THEN NULL ELSE file_instances.stage_2_at END, \
+                stage_3_at = CASE WHEN file_instances.size_bytes != excluded.size_bytes OR file_instances.modified_at != excluded.modified_at THEN NULL ELSE file_instances.stage_3_at END, \
+                size_bytes = excluded.size_bytes, \
+                modified_at = excluded.modified_at, \
+                created_at_fs = excluded.created_at_fs",
             row_placeholders.join(",")
         );
         
