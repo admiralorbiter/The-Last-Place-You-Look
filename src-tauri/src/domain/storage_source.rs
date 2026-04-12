@@ -10,4 +10,5 @@ pub struct StorageSource {
     pub currently_mounted: bool,
     pub quarantine_root: Option<String>,
     pub created_at: String,
+    pub files_indexed: i64,           // COUNT of file_instances — 0 means never scanned
 }

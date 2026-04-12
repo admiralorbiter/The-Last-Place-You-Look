@@ -108,6 +108,10 @@ pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {
             INSERT INTO file_search (rowid, file_name, volume_relative_path)
                 SELECT rowid, file_name, volume_relative_path FROM file_instances;
         "),
+        M::up("
+            -- M006: thumbnail tracking
+            ALTER TABLE file_instances ADD COLUMN thumbnail_at TEXT;
+        "),
     ]);
 
     migrations.to_latest(&mut conn)

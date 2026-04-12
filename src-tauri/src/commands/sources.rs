@@ -52,6 +52,7 @@ pub async fn add_storage_source(
         currently_mounted: true,
         quarantine_root: Some(quarantine_str.clone()),
         created_at: now.clone(),
+        files_indexed: 0,
     };
 
     conn.execute(
@@ -101,10 +102,14 @@ pub async fn list_storage_sources(
 ) -> Result<Vec<StorageSource>, AppError> {
     let conn = state.inner().lock().unwrap();
     let mut stmt = conn.prepare(
-        "SELECT id, display_name, source_kind, stable_volume_identity, current_mount_path, currently_mounted, quarantine_root, created_at 
-         FROM storage_sources 
-         WHERE removed_at IS NULL 
-         ORDER BY created_at ASC"
+        "SELECT s.id, s.display_name, s.source_kind, s.stable_volume_identity, 
+                s.current_mount_path, s.currently_mounted, s.quarantine_root, s.created_at,
+                COUNT(f.id) as files_indexed
+         FROM storage_sources s
+         LEFT JOIN file_instances f ON f.source_id = s.id AND f.deleted_at IS NULL
+         WHERE s.removed_at IS NULL 
+         GROUP BY s.id
+         ORDER BY s.created_at ASC"
     )?;
 
     let iter = stmt.query_map([], |row| {
@@ -117,6 +122,7 @@ pub async fn list_storage_sources(
             currently_mounted: row.get(5)?,
             quarantine_root: row.get(6)?,
             created_at: row.get(7)?,
+            files_indexed: row.get(8)?,
         })
     })?;
 

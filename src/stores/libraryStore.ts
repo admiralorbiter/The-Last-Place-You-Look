@@ -14,6 +14,24 @@ export interface LibraryItem {
   deletedAt: string | null;
 }
 
+export interface FileDetail {
+  id: string;
+  assetId: string | null;
+  sourceId: string;
+  sourceName: string;
+  currentlyMounted: boolean;
+  fileName: string;
+  currentPath: string | null;
+  volumeRelativePath: string;
+  extension: string | null;
+  sizeBytes: number;
+  modifiedAt: string;
+  createdAtFs: string | null;
+  stage2At: string | null;
+  blake3Hash: string | null;
+  quarantineStatus: string;
+}
+
 export type SortBy = 'modifiedAt' | 'sizeBytes' | 'fileName' | 'extension';
 export type SortDir = 'asc' | 'desc';
 
@@ -49,6 +67,7 @@ interface LibraryStore {
   stats: LibraryStats | null;
   query: LibraryQuery;
   extensionFacets: Array<{extension: string, count: number}>;
+  selectedItemId: string | null;
   
   // Internal request tracking for debounce staleness
   currentRequestId: number;
@@ -62,6 +81,7 @@ interface LibraryStore {
   setFilter: (key: keyof LibraryQuery, value: any) => void;
   setSort: (sortBy: SortBy) => void;
   setPage: (page: number) => void;
+  setSelectedItemId: (id: string | null) => void;
 }
 
 const defaultQuery: LibraryQuery = {
@@ -82,6 +102,7 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
   stats: null,
   query: defaultQuery,
   extensionFacets: [],
+  selectedItemId: null,
   currentRequestId: 0,
 
   fetchStats: async () => {
@@ -170,5 +191,9 @@ export const useLibraryStore = create<LibraryStore>((set, get) => ({
   setPage: (page: number) => {
     set({ query: { ...get().query, page } });
     get().fetchPage();
+  },
+
+  setSelectedItemId: (id: string | null) => {
+    set({ selectedItemId: id });
   }
 }));

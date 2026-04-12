@@ -55,9 +55,9 @@ Provide one browse/search surface across all registered sources.
 Deliver rich enough detail and preview to avoid constant context switching.
 
 ### Completion criteria
-- supported file types show preview or metadata summary
-- item detail page explains source, state, and relationships
-- preview failures degrade gracefully
+- [x] supported file types show preview or metadata summary
+- [x] item detail page explains source, state, and relationships
+- [x] preview failures degrade gracefully
 
 ---
 
@@ -66,9 +66,9 @@ Deliver rich enough detail and preview to avoid constant context switching.
 Detect exact duplicates and recommend likely best copies with explanation.
 
 ### Completion criteria
-- exact duplicate grouping works
-- duplicate review view exists
-- recommendation shows why and what differs
+- [x] exact duplicate grouping works
+- [ ] duplicate review view exists
+- [ ] recommendation shows why and what differs
 
 ---
 

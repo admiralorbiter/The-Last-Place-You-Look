@@ -11,6 +11,7 @@ export interface StorageSource {
   currently_mounted: boolean;
   quarantine_root: string | null;
   created_at: string;
+  files_indexed: number;  // 0 = never scanned, >0 = has catalog data
 }
 
 interface SourceStore {

@@ -1,11 +1,16 @@
 use tauri::{AppHandle, State, command};
 use crate::errors::AppError;
 use crate::domain::scan_job::{ScanJob, ScanProgress};
-use crate::services::pipeline::{start_scan as service_start_scan, PipelineManager};
+use crate::services::pipeline::{start_scan as service_start_scan, start_hashing as service_start_hashing, PipelineManager};
 
 #[command]
 pub async fn start_scan(app: AppHandle, source_id: String) -> Result<ScanJob, AppError> {
     service_start_scan(app, source_id).await
+}
+
+#[command]
+pub async fn start_hashing(app: AppHandle, source_id: String) -> Result<(), AppError> {
+    service_start_hashing(app, source_id).await
 }
 
 #[command]

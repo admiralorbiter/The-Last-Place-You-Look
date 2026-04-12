@@ -13,7 +13,7 @@ const formatBytes = (bytes: number) => {
 };
 
 export function LibraryTable() {
-  const { items, isLoading, query, setSort } = useLibraryStore();
+  const { items, isLoading, query, setSort, selectedItemId, setSelectedItemId } = useLibraryStore();
   const { sources } = useSourceStore();
 
   const getAbsolutePath = (item: LibraryItem) => {
@@ -22,12 +22,7 @@ export function LibraryTable() {
     return source.current_mount_path.replace(/\\$/, '') + '\\' + item.volumeRelativePath;
   };
 
-  const handleDoubleClick = async (item: LibraryItem) => {
-    const path = getAbsolutePath(item);
-    if (path) {
-      try { await openPath(path); } catch (e) { alert(`Failed to open default application: ${e}`); }
-    }
-  };
+  // onDoubleClick removed in favor of single-click to view panel
 
   const handleContextMenu = async (e: React.MouseEvent, item: LibraryItem) => {
     e.preventDefault();
@@ -99,15 +94,16 @@ export function LibraryTable() {
             <tr 
               key={item.id} 
               style={{
-                background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)',
+                background: item.id === selectedItemId ? 'rgba(99, 102, 241, 0.2)' : (i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)'),
                 borderBottom: '1px solid #27272a',
                 transition: 'background 0.2s',
                 opacity: item.currentlyMounted ? 1 : 0.5,
-                cursor: 'pointer'
+                cursor: 'pointer',
+                borderLeft: item.id === selectedItemId ? '3px solid #6366f1' : '3px solid transparent'
               }}
-              onMouseOver={e => e.currentTarget.style.background = 'rgba(99, 102, 241, 0.1)'}
-              onMouseOut={e => e.currentTarget.style.background = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)'}
-              onDoubleClick={() => handleDoubleClick(item)}
+              onMouseOver={e => { if(item.id !== selectedItemId) e.currentTarget.style.background = 'rgba(99, 102, 241, 0.1)' }}
+              onMouseOut={e => { if(item.id !== selectedItemId) e.currentTarget.style.background = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)' }}
+              onClick={() => setSelectedItemId(item.id)}
               onContextMenu={(e) => handleContextMenu(e, item)}
             >
               <td style={{ padding: '0.6rem 1rem', color: '#e4e4e7', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '300px' }} title={item.fileName}>

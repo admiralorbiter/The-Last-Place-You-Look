@@ -39,11 +39,16 @@ pub fn run() {
             commands::sources::remove_storage_source,
             commands::sources::list_storage_sources,
             commands::pipeline::start_scan,
+            commands::pipeline::start_hashing,
             commands::pipeline::get_scan_status,
             commands::pipeline::cancel_scan,
             commands::library::list_library,
             commands::library::search_library,
             commands::library::get_library_stats,
+            commands::library::get_file_detail,
+            commands::library::get_thumbnail,
+            commands::library::hash_single_file,
+            commands::library::find_duplicates,
             commands::os::reveal_in_explorer
         ])
         .run(tauri::generate_context!())

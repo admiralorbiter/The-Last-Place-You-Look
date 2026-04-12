@@ -5,6 +5,7 @@ import { LibraryFilterSidebar } from './library/LibraryFilterSidebar';
 import { LibraryTable } from './library/LibraryTable';
 import { LibraryPagination } from './library/LibraryPagination';
 import { LibraryStatsBar } from './library/LibraryStatsBar';
+import { LibraryDetailPanel } from './library/LibraryDetailPanel';
 
 export function Library() {
   const { fetchStats, fetchPage } = useLibraryStore();
@@ -31,6 +32,8 @@ export function Library() {
           <LibraryPagination />
         </div>
       </div>
+      
+      <LibraryDetailPanel />
     </div>
   );
 }

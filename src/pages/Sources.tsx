@@ -16,6 +16,14 @@ export function Sources() {
   const { sources, initSources } = useSourceStore();
   const { activeScans, startScan, cancelScan, fetchInitialState } = usePipelineStore();
 
+  const handleStartHashing = async (sourceId: string) => {
+    try {
+      await invoke('start_hashing', { sourceId });
+    } catch (e) {
+      alert(`Failed to start hashing: ${e}`);
+    }
+  };
+
   useEffect(() => {
     initSources();
     fetchInitialState();
@@ -91,9 +99,14 @@ export function Sources() {
         {sources.map(source => {
           const scan = activeScans[source.id];
           const isScanning = scan?.status === 'running';
-          const percent = scan?.total_used_bytes 
-            ? Math.min(100, Math.round((scan.bytes_found / scan.total_used_bytes) * 100))
-            : 0;
+          let percent = 0;
+          if (scan) {
+            if (scan.stage === 1 && scan.total_used_bytes) {
+              percent = Math.min(100, Math.round((scan.bytes_found / scan.total_used_bytes) * 100));
+            } else if (scan.stage === 2 && scan.files_found > 0) {
+              percent = Math.min(100, Math.round((scan.files_inserted / scan.files_found) * 100));
+            }
+          }
 
           return (
             <div 
@@ -168,15 +181,25 @@ export function Sources() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
                       {!isScanning && (
-                        <p style={{ margin: 0, color: scan?.status === 'completed' ? '#10b981' : '#a1a1aa', fontSize: '0.95rem' }}>
-                          {scan?.status === 'completed' ? `Cataloged ${scan.files_found.toLocaleString()} files (${formatBytes(scan.total_used_bytes)})` : 'Ready to scan catalog inventory.'}
+                        <p style={{ margin: 0, color: source.files_indexed > 0 ? '#10b981' : '#a1a1aa', fontSize: '0.95rem' }}>
+                          {source.files_indexed > 0
+                            ? `Cataloged ${source.files_indexed.toLocaleString()} files`
+                            : 'Ready to scan catalog inventory.'}
                         </p>
                       )}
-                      {isScanning && (
+                      {isScanning && scan?.stage === 1 && (
                         <div>
                           <p style={{ margin: 0, color: '#e0e0e0', fontWeight: 600 }}>Scanning Drive Inventory...</p>
                           <p style={{ margin: '0.2rem 0 0 0', color: '#888', fontSize: '0.85rem' }}>
-                            {scan.files_found.toLocaleString()} files indexed ({formatBytes(scan.bytes_found)})
+                            {scan.files_found.toLocaleString()} files verified ({formatBytes(scan.bytes_found)} scanned)
+                          </p>
+                        </div>
+                      )}
+                      {isScanning && scan?.stage === 2 && (
+                        <div>
+                          <p style={{ margin: 0, color: '#e0e0e0', fontWeight: 600 }}>Background Hashing (Stage 2)...</p>
+                          <p style={{ margin: '0.2rem 0 0 0', color: '#888', fontSize: '0.85rem' }}>
+                            {scan.files_inserted.toLocaleString()} / {scan.files_found.toLocaleString()} files hashed
                           </p>
                         </div>
                       )}
@@ -184,23 +207,48 @@ export function Sources() {
                     
                     <div>
                       {!isScanning ? (
-                        <button 
-                          onClick={() => startScan(source.id)} 
-                          style={{ 
-                            padding: '0.6rem 1.5rem', 
-                            backgroundColor: '#27272a', 
-                            color: 'white', 
-                            border: '1px solid #3f3f46', 
-                            borderRadius: '6px',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            transition: 'all 0.2s'
-                          }}
-                          onMouseOver={e => e.currentTarget.style.backgroundColor = '#3f3f46'}
-                          onMouseOut={e => e.currentTarget.style.backgroundColor = '#27272a'}
-                        >
-                          {scan?.status === 'completed' ? 'Rescan Index' : 'Start Full Scan'}
-                        </button>
+                        <>
+                          <button 
+                            onClick={() => startScan(source.id)} 
+                            style={{ 
+                              padding: '0.6rem 1.5rem', 
+                              backgroundColor: '#27272a', 
+                              color: 'white', 
+                              border: '1px solid #3f3f46', 
+                              borderRadius: '6px',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              transition: 'all 0.2s',
+                              width: '100%'
+                            }}
+                            onMouseOver={e => e.currentTarget.style.backgroundColor = '#3f3f46'}
+                            onMouseOut={e => e.currentTarget.style.backgroundColor = '#27272a'}
+                          >
+                            {source.files_indexed > 0 ? 'Rescan Index' : 'Start Full Scan'}
+                          </button>
+                          {!isScanning && (
+                            <button
+                              onClick={() => handleStartHashing(source.id)}
+                              style={{
+                                marginTop: '0.5rem',
+                                width: '100%',
+                                padding: '0.5rem',
+                                backgroundColor: 'transparent',
+                                color: '#8b5cf6',
+                                border: '1px solid rgba(139,92,246,0.4)',
+                                borderRadius: '6px',
+                                fontWeight: 500,
+                                cursor: 'pointer',
+                                fontSize: '0.85rem',
+                                transition: 'all 0.2s'
+                              }}
+                              onMouseOver={e => { e.currentTarget.style.backgroundColor = 'rgba(139,92,246,0.1)'; }}
+                              onMouseOut={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                            >
+                              ⚡ Start Hashing Only
+                            </button>
+                          )}
+                        </>
                       ) : (
                         <button 
                           onClick={() => cancelScan(source.id)}
@@ -223,8 +271,12 @@ export function Sources() {
                   {isScanning && (
                     <div style={{ marginTop: '1.25rem' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: '#a1a1aa', marginBottom: '0.4rem' }}>
-                        <span>Stage 1: Metadata Walk</span>
-                        <span>{percent}% ({formatBytes(scan?.total_used_bytes || 0)} total)</span>
+                        <span>{scan?.stage === 1 ? 'Stage 1: Metadata Walk' : 'Stage 2: BLAKE3 Fingerprinting'}</span>
+                        <span>
+                          {scan?.stage === 1 
+                            ? `${percent}% (${formatBytes(scan?.total_used_bytes || 0)} total)`
+                            : `${percent}%`}
+                        </span>
                       </div>
                       <div style={{ height: '6px', background: '#27272a', borderRadius: '3px', overflow: 'hidden' }}>
                         <div style={{ 

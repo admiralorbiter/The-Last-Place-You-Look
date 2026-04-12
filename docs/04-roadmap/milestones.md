@@ -60,15 +60,15 @@ Epics 3 and 4 can be developed in parallel once the file instance schema (from E
 The core product value is complete. A user can identify duplicates, see an explained recommendation, and view item details and previews.
 
 ### Done when
-- Supported file types show thumbnails and a basic preview panel (images, video thumbnails, PDF first page)
-- Preview failures degrade gracefully — no crashes or blank screens
-- Item detail page shows source, state, and relationships
-- Exact duplicate grouping works across storage sources
-- Duplicate group review view exists
-- Likely best copy recommendation is visible with a ranked explanation
-- Fixed internal ranking signals are implemented (not user-tunable in MVP)
-- User can pin a preferred copy; pin persists across rescans
-- Intentional backup can be marked and is distinct from accidental duplicate in UI
+- [x] Supported file types show thumbnails and a basic preview panel (images, video thumbnails, PDF first page)
+- [x] Preview failures degrade gracefully — no crashes or blank screens
+- [x] Item detail page shows source, state, and relationships
+- [x] Exact duplicate grouping works across storage sources
+- [ ] Duplicate group review view exists
+- [ ] Likely best copy recommendation is visible with a ranked explanation
+- [ ] Fixed internal ranking signals are implemented (not user-tunable in MVP)
+- [ ] User can pin a preferred copy; pin persists across rescans
+- [ ] Intentional backup can be marked and is distinct from accidental duplicate in UI
 
 ### Dependency note
 Epic 6 requires hashing from Epic 3. Epic 5 requires file instance records from Epic 3. Both can begin once Phase 1 (Epic 3) is stable.
