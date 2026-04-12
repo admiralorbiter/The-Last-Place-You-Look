@@ -1,49 +1,44 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
+import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { useAppStore } from "./stores/appStore";
 import "./App.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+interface AppInfo {
+  version: string;
+  db_status: string;
+}
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+function App() {
+  const { appReady, appVersion, dbStatus, setAppReady, setAppVersion, setDbStatus } = useAppStore();
+
+  useEffect(() => {
+    const unlisten = listen("app://ready", async () => {
+      setAppReady(true);
+      try {
+        const info = await invoke<AppInfo>("get_app_info");
+        setAppVersion(info.version);
+        setDbStatus(info.db_status);
+      } catch (e) {
+        console.error("Failed to get app info:", e);
+      }
+    });
+
+    return () => {
+      unlisten.then(f => f());
+    };
+  }, [setAppReady, setAppVersion, setDbStatus]);
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+    <main className="container" style={{ padding: '2rem', textAlign: 'left' }}>
+      <h1>The Last Place You Look</h1>
+      
+      <div style={{ marginTop: '2rem', padding: '1rem', border: '1px solid #ccc', borderRadius: '8px' }}>
+        <h2>System Status</h2>
+        <p><strong>App Ready:</strong> {appReady ? "✅ Yes" : "⏳ Waiting..."}</p>
+        <p><strong>Version:</strong> {appVersion || "Loading..."}</p>
+        <p><strong>Database:</strong> {dbStatus === "ok" ? "✅ Connected" : (dbStatus || "Loading...")}</p>
       </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
     </main>
   );
 }
