@@ -112,6 +112,26 @@ pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {
             -- M006: thumbnail tracking
             ALTER TABLE file_instances ADD COLUMN thumbnail_at TEXT;
         "),
+        M::up("
+            -- M007: Epic 6 exact duplicates schema
+            ALTER TABLE file_instances ADD COLUMN preferred_copy INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE file_instances ADD COLUMN duplicate_note TEXT;
+        "),
+        M::up("
+            -- M008: Composite indexes for duplicate detection queries
+            -- Confirmed: covers GROUP BY blake3_hash for hashed, live files
+            CREATE INDEX IF NOT EXISTS idx_dupes_confirmed
+                ON file_instances(blake3_hash, file_name)
+                WHERE deleted_at IS NULL
+                  AND blake3_hash IS NOT NULL
+                  AND blake3_hash != '';
+
+            -- Probable: covers GROUP BY (file_name, size_bytes) for unhashed, live files
+            CREATE INDEX IF NOT EXISTS idx_dupes_probable
+                ON file_instances(file_name, size_bytes, id)
+                WHERE deleted_at IS NULL
+                  AND (blake3_hash IS NULL OR blake3_hash = '');
+        "),
     ]);
 
     migrations.to_latest(&mut conn)

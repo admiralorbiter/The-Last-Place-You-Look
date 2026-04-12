@@ -17,9 +17,12 @@ pub fn run() {
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir().expect("failed to get app data dir");
             let conn = persistence::db::init_db(&app_data_dir).expect("failed to init db");
+            let db_path = app_data_dir.join("tlpyl.db");
             
             let arc_conn = Arc::new(Mutex::new(conn));
             app.manage(arc_conn.clone());
+            // Store path so heavy read-only commands can open their own connection
+            app.manage(Arc::new(db_path));
             
             // Reconcile mount status — non-fatal if it fails (e.g. on first run or schema issues)
             match services::sources::reconcile_mount_status(&arc_conn.lock().unwrap(), app.handle()) {
@@ -49,6 +52,10 @@ pub fn run() {
             commands::library::get_thumbnail,
             commands::library::hash_single_file,
             commands::library::find_duplicates,
+            commands::library::list_duplicate_groups,
+            commands::library::set_preferred_copy,
+            commands::library::set_duplicate_note,
+            commands::library::verify_probable_group,
             commands::os::reveal_in_explorer
         ])
         .run(tauri::generate_context!())

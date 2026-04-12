@@ -398,3 +398,320 @@ pub async fn find_duplicates(
 
     Ok(DuplicateResult { confirmed, probable })
 }
+#[derive(serde::Serialize)]
+pub struct DuplicateGroupMember {
+    pub id: String,
+    pub file_name: String,
+    pub current_path: Option<String>,
+    pub volume_relative_path: String,
+    pub source_name: String,
+    pub source_kind: String,
+    pub size_bytes: i64,
+    pub preferred_copy: bool,
+}
+
+#[derive(serde::Serialize)]
+pub struct DuplicateGroup {
+    pub group_id: String,
+    pub confidence: String,
+    pub file_name: String,
+    pub size_bytes: i64,
+    pub members: Vec<DuplicateGroupMember>,
+    pub recommended_id: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct DuplicateGroupsResult {
+    pub confirmed: Vec<DuplicateGroup>,
+    pub probable: Vec<DuplicateGroup>,
+    pub total_recoverable_bytes: i64,
+}
+
+// Helper to determine the recommended copy
+fn recommend_best_copy(members: &[DuplicateGroupMember]) -> Option<String> {
+    if members.is_empty() { return None; }
+    
+    // 1. Explicit user pin overrides all
+    if let Some(pinned) = members.iter().find(|m| m.preferred_copy) {
+        return Some(pinned.id.clone());
+    }
+
+    // Default ranking heuristic: lowest score wins.
+    let mut best: Option<&DuplicateGroupMember> = None;
+    let mut min_score = i32::MAX;
+
+    for m in members {
+        let mut score = 0;
+        // Penalities
+        if m.source_kind == "removable" {
+            score += 100;
+        }
+        let depth = m.volume_relative_path.matches('\\').count() as i32 + 
+                    m.volume_relative_path.matches('/').count() as i32;
+        score += depth * 10;
+        
+        let len_score = (m.volume_relative_path.len() / 5) as i32;
+        score += len_score;
+
+        if score < min_score {
+            min_score = score;
+            best = Some(m);
+        }
+    }
+
+    best.map(|m| m.id.clone())
+}
+
+#[tauri::command]
+pub async fn list_duplicate_groups(
+    db_path: State<'_, Arc<std::path::PathBuf>>,
+) -> Result<DuplicateGroupsResult, AppError> {
+    let path = (**db_path).clone();
+
+    // Run entirely in a blocking thread with its own dedicated read-only connection.
+    // This keeps the shared Arc<Mutex<Connection>> free for all other commands while
+    // the heavy GROUP BY scans run.
+    tokio::task::spawn_blocking(move || {
+        let conn = rusqlite::Connection::open_with_flags(
+            &path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        ).map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        // Read-optimised pragmas for this temp connection
+        let _ = conn.execute_batch(
+            "PRAGMA query_only = ON;
+             PRAGMA cache_size = -32000;
+             PRAGMA temp_store = MEMORY;"
+        );
+
+        // ── Confirmed groups ─────────────────────────────────────────────
+        // Uses idx_dupes_confirmed (blake3_hash, file_name) partial index
+        let confirmed_rows: Vec<(String, String, i64, String, String, Option<String>, String, String, i64, i32)> = {
+            let mut stmt = conn.prepare(
+                "WITH dup_hashes AS (
+                    SELECT blake3_hash
+                    FROM file_instances
+                    WHERE deleted_at IS NULL
+                      AND blake3_hash IS NOT NULL
+                      AND blake3_hash != ''
+                    GROUP BY blake3_hash
+                    HAVING COUNT(*) > 1
+                )
+                SELECT f.blake3_hash, f.file_name, f.size_bytes,
+                       f.id, s.display_name, f.current_path,
+                       f.volume_relative_path, s.source_kind,
+                       f.size_bytes, f.preferred_copy
+                FROM file_instances f
+                JOIN storage_sources s ON s.id = f.source_id
+                JOIN dup_hashes d      ON d.blake3_hash = f.blake3_hash
+                WHERE f.deleted_at IS NULL
+                ORDER BY f.blake3_hash, f.file_name"
+            ).map_err(|e| AppError::DatabaseError(e.to_string()))?;
+            let x: Vec<_> = stmt.query_map([], |row| {
+                Ok((
+                    row.get(0)?, row.get(1)?, row.get(2)?,
+                    row.get(3)?, row.get(4)?, row.get(5)?,
+                    row.get(6)?, row.get(7)?, row.get(8)?,
+                    row.get(9)?,
+                ))
+            }).map_err(|e| AppError::DatabaseError(e.to_string()))?.flatten().collect();
+            x
+        };
+
+        let mut confirmed_map: std::collections::HashMap<String, DuplicateGroup> = Default::default();
+        let mut total_recoverable_bytes = 0i64;
+
+        for (hash, f_name, size, id, src_name, cur_path, vol_path, src_kind, sz, pref) in confirmed_rows {
+            let group = confirmed_map.entry(hash.clone()).or_insert_with(|| DuplicateGroup {
+                group_id: format!("conf_{}", hash),
+                confidence: "confirmed".into(),
+                file_name: f_name,
+                size_bytes: size,
+                members: vec![],
+                recommended_id: None,
+            });
+            group.members.push(DuplicateGroupMember {
+                id,
+                file_name: group.file_name.clone(),
+                current_path: cur_path,
+                volume_relative_path: vol_path,
+                source_name: src_name,
+                source_kind: src_kind,
+                size_bytes: sz,
+                preferred_copy: pref > 0,
+            });
+        }
+
+        let mut confirmed: Vec<DuplicateGroup> = confirmed_map.into_values().collect();
+        for g in &mut confirmed {
+            if g.members.len() > 1 {
+                total_recoverable_bytes += g.size_bytes * (g.members.len() as i64 - 1);
+            }
+            g.recommended_id = recommend_best_copy(&g.members);
+        }
+        confirmed.retain(|g| g.members.len() > 1);
+
+        // ── Probable groups ──────────────────────────────────────────────
+        // Uses idx_dupes_probable (file_name, size_bytes, id) partial index
+        let probable_rows: Vec<(String, i64, String, String, Option<String>, String, String, i64, i32)> = {
+            let mut stmt = conn.prepare(
+                "WITH dup_keys AS (
+                    -- 512KB floor: skip icons, configs, thumbnails — only meaningful files
+                    SELECT file_name, size_bytes
+                    FROM file_instances
+                    WHERE deleted_at IS NULL
+                      AND (blake3_hash IS NULL OR blake3_hash = '')
+                      AND size_bytes >= 524288
+                    GROUP BY file_name, size_bytes
+                    HAVING COUNT(*) > 1
+                )
+                SELECT f.file_name, f.size_bytes,
+                       f.id, s.display_name, f.current_path,
+                       f.volume_relative_path, s.source_kind,
+                       f.size_bytes, f.preferred_copy
+                FROM file_instances f
+                JOIN storage_sources s ON s.id = f.source_id
+                JOIN dup_keys dk ON dk.file_name = f.file_name
+                                 AND dk.size_bytes = f.size_bytes
+                WHERE f.deleted_at IS NULL
+                  AND (f.blake3_hash IS NULL OR f.blake3_hash = '')
+                  AND f.size_bytes >= 524288
+                ORDER BY f.size_bytes DESC, f.file_name
+                LIMIT 2000"
+            ).map_err(|e| AppError::DatabaseError(e.to_string()))?;
+            let x: Vec<_> = stmt.query_map([], |row| {
+                Ok((
+                    row.get(0)?, row.get(1)?,
+                    row.get(2)?, row.get(3)?, row.get(4)?,
+                    row.get(5)?, row.get(6)?, row.get(7)?,
+                    row.get(8)?,
+                ))
+            }).map_err(|e| AppError::DatabaseError(e.to_string()))?.flatten().collect();
+            x
+        };
+
+        let mut probable_map: std::collections::HashMap<(String, i64), DuplicateGroup> = Default::default();
+        for (f_name, size, id, src_name, cur_path, vol_path, src_kind, sz, pref) in probable_rows {
+            let key = (f_name.clone(), size);
+            let group = probable_map.entry(key).or_insert_with(|| DuplicateGroup {
+                group_id: format!("prob_{}_{}", f_name, size),
+                confidence: "probable".into(),
+                file_name: f_name.clone(),
+                size_bytes: size,
+                members: vec![],
+                recommended_id: None,
+            });
+            group.members.push(DuplicateGroupMember {
+                id,
+                file_name: f_name,
+                current_path: cur_path,
+                volume_relative_path: vol_path,
+                source_name: src_name,
+                source_kind: src_kind,
+                size_bytes: sz,
+                preferred_copy: pref > 0,
+            });
+        }
+
+        let mut probable: Vec<DuplicateGroup> = probable_map.into_values().collect();
+        for g in &mut probable {
+            g.recommended_id = recommend_best_copy(&g.members);
+        }
+        probable.retain(|g| g.members.len() > 1);
+
+        Ok(DuplicateGroupsResult { confirmed, probable, total_recoverable_bytes })
+    })
+    .await
+    .map_err(|_| AppError::IoError("Duplicate analysis task panicked".into()))?
+}
+
+
+#[tauri::command]
+pub async fn set_preferred_copy(
+    db: State<'_, Arc<Mutex<Connection>>>,
+    file_id: String,
+    group_member_ids: Vec<String>, 
+) -> Result<(), AppError> {
+    let mut conn = db.lock().unwrap();
+    let tx = conn.transaction()?;
+    for id in &group_member_ids {
+        if id == &file_id {
+            tx.execute("UPDATE file_instances SET preferred_copy = 1 WHERE id = ?", rusqlite::params![id])?;
+        } else {
+            tx.execute("UPDATE file_instances SET preferred_copy = 0 WHERE id = ?", rusqlite::params![id])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_duplicate_note(
+    db: State<'_, Arc<Mutex<Connection>>>,
+    file_id: String,
+    note: String,
+) -> Result<(), AppError> {
+    let conn = db.lock().unwrap();
+    conn.execute(
+        "UPDATE file_instances SET duplicate_note = ? WHERE id = ?",
+        rusqlite::params![note, file_id],
+    )?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn verify_probable_group(
+    db: State<'_, Arc<Mutex<Connection>>>,
+    file_ids: Vec<String>,
+) -> Result<bool, AppError> {
+    let mut paths_to_hash = Vec::new();
+    {
+        let conn = db.lock().unwrap();
+        for id in &file_ids {
+            let p: Option<String> = conn.query_row(
+                "SELECT current_path FROM file_instances WHERE id = ?", 
+                rusqlite::params![id], 
+                |r| r.get(0)
+            ).unwrap_or(None);
+            
+            if let Some(path) = p {
+                paths_to_hash.push((id.clone(), path));
+            } else {
+                return Err(AppError::InvalidInput("Cannot verify: one or more files in this group are offline.".into()));
+            }
+        }
+    }
+
+    let mut hashes = Vec::new();
+    let now = chrono::Utc::now().to_rfc3339();
+
+    for (id, path) in paths_to_hash {
+        let hash = tokio::task::spawn_blocking(move || {
+            crate::services::pipeline::hash_file_public(&path)
+        })
+        .await
+        .map_err(|_| AppError::IoError("Hash task panicked".into()))?
+        .map_err(AppError::IoError)?;
+
+        hashes.push((id, hash));
+    }
+
+    {
+        let mut conn = db.lock().unwrap();
+        let tx = conn.transaction()?;
+        for (id, hash) in &hashes {
+            tx.execute(
+                "UPDATE file_instances SET blake3_hash = ?1, stage_2_at = ?2 WHERE id = ?3",
+                rusqlite::params![hash, now, id],
+            )?;
+        }
+        tx.commit()?;
+    }
+
+    if hashes.is_empty() { return Ok(false); }
+    let first_hash = &hashes[0].1;
+    let all_match = hashes.iter().all(|(_, h)| h == first_hash);
+
+    Ok(all_match)
+}
+

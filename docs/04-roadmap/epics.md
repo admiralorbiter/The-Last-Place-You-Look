@@ -67,8 +67,8 @@ Detect exact duplicates and recommend likely best copies with explanation.
 
 ### Completion criteria
 - [x] exact duplicate grouping works
-- [ ] duplicate review view exists
-- [ ] recommendation shows why and what differs
+- [x] duplicate review view exists
+- [x] recommendation shows why and what differs
 
 ---
 

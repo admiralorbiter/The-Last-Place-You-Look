@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type Page = 'home' | 'library' | 'sources' | 'settings';
+export type Page = 'home' | 'library' | 'sources' | 'duplicates' | 'settings';
 
 interface NavigationStore {
   activePage: Page;

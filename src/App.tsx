@@ -5,6 +5,7 @@ import { useAppStore } from "./stores/appStore";
 import { useNavigationStore, Page } from "./stores/navigationStore";
 import { Sources } from "./pages/Sources";
 import { Library } from "./pages/Library";
+import { Duplicates } from "./pages/Duplicates";
 import "./App.css";
 
 interface AppInfo {
@@ -39,6 +40,7 @@ function App() {
     switch (activePage) {
       case 'sources': return <Sources />;
       case 'library': return <Library />;
+      case 'duplicates': return <Duplicates />;
       default: return <div style={{ padding: '2rem', color: '#888' }}>Not implemented yet.</div>;
     }
   };
@@ -78,6 +80,7 @@ function App() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
           <NavItem page="home" label="Dashboard" icon="🏠" />
           <NavItem page="library" label="Library" icon="📚" />
+          <NavItem page="duplicates" label="Duplicates" icon="👯" />
           <NavItem page="sources" label="Sources" icon="💾" />
           <NavItem page="settings" label="Settings" icon="⚙️" />
         </div>

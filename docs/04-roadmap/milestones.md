@@ -64,10 +64,10 @@ The core product value is complete. A user can identify duplicates, see an expla
 - [x] Preview failures degrade gracefully — no crashes or blank screens
 - [x] Item detail page shows source, state, and relationships
 - [x] Exact duplicate grouping works across storage sources
-- [ ] Duplicate group review view exists
-- [ ] Likely best copy recommendation is visible with a ranked explanation
-- [ ] Fixed internal ranking signals are implemented (not user-tunable in MVP)
-- [ ] User can pin a preferred copy; pin persists across rescans
+- [x] Duplicate group review view exists (two-tier: Confirmed + Probable, with Verify Hash action)
+- [x] Likely best copy recommendation is visible with a ranked explanation (source type, path depth, path length signals)
+- [x] Fixed internal ranking signals are implemented (not user-tunable in MVP)
+- [x] User can pin a preferred copy; pin persists across rescans
 - [ ] Intentional backup can be marked and is distinct from accidental duplicate in UI
 
 ### Dependency note

@@ -11,6 +11,9 @@ These questions were open at project start and have been decided. Recorded here 
 | What exact ranking weights should likely-best-copy use? | Fixed internal weights, not user-tunable in MVP. The ranking formula is an implementation detail. User-tunable profiles are a post-MVP feature. | ADR 0008 |
 | How much path continuity should be inferred automatically for moved/renamed files? | Hash-based best-effort. If a file disappears and a file with an identical content hash appears at a new path on the same source during rescan, continuity is inferred. Name-only or size-only inference is not used. | ADR 0009 |
 | Should preferred copy be persisted directly or derived from signals each time? | Hybrid. Computed by default from ranking signals. User can pin a preferred copy, which persists as a `preferred_copy` relationship edge and survives rescans. | ADR 0008 |
+| What is the exact UI pattern for user-pinning a preferred copy? | Inline "Pin" button on each member row in the Duplicate Review group card. Pinned copy is highlighted in green with a ★ badge. Survives rescans via `preferred_copy = 1` on `file_instances`. | Epic 6 implementation |
+| Which file types get a preview panel (beyond just thumbnail) in the MVP preview scope? | Images: inline panel. Video: thumbnail only. PDF: first page rendered as image. All others: metadata panel only. | Epic 5 implementation |
+| Should hashing be triggered automatically for all files on scan? | **No.** Hashing is on-demand only: auto-triggered when a file is opened in the detail panel, and optionally run in bulk per-source. Avoids saturating slow external drives. Probable duplicates (name + size) fill the gap for unhashed files. | ADR 0010 |
 
 ---
 
@@ -19,8 +22,6 @@ These questions were open at project start and have been decided. Recorded here 
 | Question | Resolve before | Current lean |
 |---|---|---|
 | What is the minimum target dataset size the scan pipeline must handle acceptably? (e.g., 50k files? 200k files?) | **Resolved during Epic 3.** Standard serial traversal handles 2M+ files on large mechanical HDDs in 7–15 minutes. Fast Scan (MFT) deferred as optional post-MVP extension. Target: 200k files in standard mode, unlimited in Fast Scan mode. | Epic 3, Story 3.5 |
-| What is the exact UI pattern for user-pinning a preferred copy? Button in group review? Right-click context menu? | Epic 6 | Inline "Pin as preferred" button in the duplicate group review member list. |
-| Which file types get a preview panel (beyond just thumbnail) in the MVP preview scope? | Epic 5 | Images: inline panel. Video: thumbnail only. PDF: first page rendered as image. All others: metadata panel only. |
 
 ---
 

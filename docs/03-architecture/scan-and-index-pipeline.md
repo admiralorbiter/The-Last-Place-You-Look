@@ -17,10 +17,12 @@ The application should become useful quickly with shallow inventory, then deepen
 - queue items for deeper work
 - prioritize visible, recently changed, or high-interest items first where helpful
 
-### Stage 3: Hashing
-- compute content hashes for duplicate detection
-- support resumable progress
-- avoid blocking the UI thread
+### Stage 3: Hashing (on-demand by default)
+- **Default mode: on-demand.** Hashing is triggered automatically when a user opens a file in the detail panel. The hash is computed, persisted to `file_instances.blake3_hash`, and used immediately for duplicate detection.
+- **Bulk mode: optional.** A full background hash sweep over a registered source can be started manually. This mode is intentionally not the default to avoid saturating slow external drives.
+- Uses BLAKE3 for content hashing (fast, cryptographically strong, resumable)
+- `spawn_blocking` is used so hashing never blocks the async runtime
+- Results are cached in the database: re-opening a previously hashed file costs one DB read, not a full re-hash
 
 ### Stage 4: Metadata extraction
 - extract media/doc metadata where supported
