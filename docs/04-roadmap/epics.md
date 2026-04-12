@@ -29,10 +29,13 @@ Register mounted local storage sources and preserve identity across restarts and
 Build fast inventory-first scanning with background enrichment.
 
 ### Completion criteria
-- stage 1 inventory produces visible library records quickly
-- progress is visible by source
-- rescans update existing catalog state
-- source disappearance does not destroy catalog knowledge
+- [x] stage 1 inventory produces visible library records quickly
+- [x] progress is visible by source (live file count, bytes, animated % bar)
+- [ ] rescans detect changed and removed files (schema supports it; logic not yet wired)
+- [ ] source disappearance does not destroy catalog knowledge (soft-delete field exists; rescan wiring pending)
+
+### Optional extension (post-MVP)
+- Fast Scan via NTFS MFT read (requires UAC elevation; ~10–20× faster on mechanical HDDs). See Story 3.5 in epic-03-stories.md.
 
 ---
 

@@ -6,90 +6,160 @@ Epic goal: Build fast inventory-first scanning with background enrichment.
 
 ---
 
-## Story 3.1: File Instance Schema & M003 Migration
+## Story 3.1: File Instance Schema & Migrations (M003, M004) ✅ DONE
 
 ### What
-Establish the core `file_instances` table that will securely hold every file discovered across all volumes.
+Establish the core `file_instances` and `scan_jobs` tables that form the backbone of the catalog.
 
-### Schema
+### Implemented schema (actual)
 ```sql
 CREATE TABLE file_instances (
-    id                    TEXT PRIMARY KEY,
+    id                    TEXT PRIMARY KEY,          -- UUID v4
+    asset_id              TEXT,                      -- NULL until Stage 6 assigns asset grouping
     source_id             TEXT NOT NULL REFERENCES storage_sources(id),
-    volume_relative_path  TEXT NOT NULL,
+    stable_location_id    TEXT NOT NULL,             -- preserved on move inference (ADR 0009)
+    volume_relative_path  TEXT NOT NULL,             -- drive-letter-stable path
+    current_path          TEXT,
+    file_name             TEXT NOT NULL,
+    extension             TEXT,
     size_bytes            INTEGER NOT NULL,
-    modified_time         TEXT NOT NULL,  -- ISO 8601
-    
-    stage_1_completed     INTEGER NOT NULL DEFAULT 0,
-    stage_2_completed     INTEGER NOT NULL DEFAULT 0,
-    
-    blake3_hash           TEXT,           -- Generated in Stage 2
-    
-    deleted_at            TEXT,           -- Soft delete if file goes missing
-    
+    modified_at           TEXT NOT NULL,             -- ISO 8601
+    created_at_fs         TEXT,
+    stage_1_at            TEXT,
+    stage_2_at            TEXT,
+    stage_3_at            TEXT,
+    blake3_hash           TEXT,
+    deleted_at            TEXT,
+    quarantine_status     TEXT NOT NULL DEFAULT 'none',
     UNIQUE(source_id, volume_relative_path)
+);
+
+CREATE TABLE scan_jobs (
+    id             TEXT PRIMARY KEY,
+    source_id      TEXT NOT NULL REFERENCES storage_sources(id),
+    started_at     TEXT NOT NULL,
+    completed_at   TEXT,
+    status         TEXT NOT NULL DEFAULT 'running',
+    stage          INTEGER NOT NULL DEFAULT 1,
+    files_found    INTEGER NOT NULL DEFAULT 0,
+    files_inserted INTEGER NOT NULL DEFAULT 0,
+    error_message  TEXT
 );
 ```
 
 ### Done when
-- M003 migration is defined in `persistence/db.rs`
-- Database migrates safely on startup
+- [x] M003 and M004 migrations defined in `persistence/db.rs`
+- [x] Database migrates safely on startup
+- [x] SQLite performance pragmas applied (WAL, synchronous=NORMAL, cache=64MB, temp_store=MEMORY)
 
 ---
 
-## Story 3.2: The Pipeline Orchestrator & State
+## Story 3.2: The Pipeline Orchestrator & PipelineManager State ✅ DONE
 
 ### What
-Create the Rust backend thread that manages background scanning operations. Tauri commands should trigger scans asynchronously without blocking the UI.
+An async Tauri-managed state object that tracks active scan jobs and bridges the Tokio runtime to the jwalk worker thread.
 
-### Tasks
-- Create `services/pipeline.rs` 
-- Set up a Tokio async worker thread that reads from an MPSC channel (for incoming scan requests)
-- Maintain an `ActiveScan` state object in a Rust Mutex so the frontend can query progress
-- Expose `start_scan(source_id)` and `get_scan_status()` Tauri commands
+### Implemented
+- `services/pipeline.rs` — contains `PipelineManager` (managed state), `start_scan`, `stage_1_worker`
+- `commands/pipeline.rs` — exposes `start_scan`, `get_scan_status`, `cancel_scan` to frontend
+- `PipelineManager` registered in `lib.rs` via `.manage()`
+- A `sync_channel(50_000)` decouples the walker thread from the SQLite writer thread (producer/consumer)
 
 ### Done when
-- Frontend can command backend to start scanning a specific source
-- A backend thread wakes up, executes dummy work, and updates a state map the frontend can poll
+- [x] Frontend can command backend to start scanning a specific source
+- [x] Scan runs fully in background without blocking the UI
+- [x] Progress emitted via `pipeline://progress` events
 
 ---
 
-## Story 3.3: Stage 1 Traversal (Inventory)
+## Story 3.3: Stage 1 Traversal (Inventory) ✅ DONE
 
 ### What
-Implement the lightning-fast filesystem walk over a source using `jwalk`.
+High-performance filesystem walk that populates `file_instances` from a registered source.
 
-### Tasks
-- Introduce `jwalk` and `crossbeam-channel` into `Cargo.toml`.
-- When `start_scan` fires for a source, resolve the Volume GUID into the `current_mount_path`.
-- Recursively walk the source mount path, skipping system directories and the `.tlpyl-quarantine` folder.
-- Harvest relative paths, sizes, and modified times.
-- Yield items instantly to an SQLite write-thread using channels to avoid database lock contention.
+### Implemented
+- `jwalk` for directory traversal; mode selected by `source_kind`:
+  - **Removable/external drives**: `Serial` parallelism (avoids HDD head thrashing)
+  - **Internal drives**: `RayonDefaultPool` (multi-threaded, SSD-optimized)
+- System directories skipped automatically: `.tlpyl-quarantine`, `System Volume Information`, `$RECYCLE.BIN`
+- Records sent from walker thread → DB writer thread via `mpsc::sync_channel`
+- DB writer uses chunked multi-row `INSERT OR IGNORE` (85 rows × 11 columns = 935 params, under SQLite limit)
+- Batch size: 10,000 records per transaction
+- Progress events emitted every 10,000 files; DB `scan_jobs` updated every 25,000 files
+
+### Performance (observed, H:\ — 6.54 TB USB external HDD)
+- Serial mode: ~150–300k files/minute sustained
+- Full drive (~2M files): approximately 7–15 minutes
+- SQLite is **not** the bottleneck — mechanical disk I/O is the ceiling in standard OS traversal
 
 ### Done when
-- Scanning a large drive inserts thousands of records per second without freezing the UI.
-- The `file_instances` table is populated correctly.
+- [x] Scanning a large drive populates `file_instances` without freezing UI
+- [x] `INSERT OR IGNORE` ensures idempotency — rescans do not clobber Stage 3 hashes
+- [x] `volume_relative_path` stored (not absolute), stable across drive letter changes
 
 ---
 
-## Story 3.4: Scan UI & Progress
+## Story 3.4: Scan UI & Real-Time Progress ✅ DONE
 
 ### What
-Surface the pipeline state in the React frontend.
+Surface the pipeline state in the React frontend with live progress.
 
-### Tasks
-- Add a "Scan" button onto each Source card in the `Sources.tsx` view.
-- Introduce a global `pipelineStore.ts` tracking active jobs.
-- Show a simple progress spinner or indicator when a drive is actively scanning.
+### Implemented
+- `stores/pipelineStore.ts` — Zustand store subscribing to `pipeline://progress` events
+- `pages/Sources.tsx` — redesigned source cards with:
+  - "Start Full Scan" / "Rescan Index" button (per online source)
+  - Live file count + bytes transferred
+  - Animated gradient progress bar derived from `bytes_found / total_used_bytes` (disk-space-based %)
+  - `GetDiskFreeSpaceExW` Win32 call to fetch total used bytes for percentage calculation
+  - Completion state shows total files cataloged and total size
 
 ### Done when
-- Clicking Scan triggers the backend correctly.
-- Background scanning is visually apparent attached to the correct source card.
+- [x] Clicking Scan triggers backend correctly
+- [x] Progress bar increments smoothly without UI freeze
+- [x] Percentage estimate is grounded in real disk usage data
+
+---
+
+## Story 3.5 (Extension — Post-MVP): Fast Scan via NTFS MFT
+
+### What
+An optional "Fast Scan" mode that reads the NTFS Master File Table (MFT) directly, bypassing OS filesystem traversal entirely. This is how WizTree and Everything achieve near-instant full-drive indexing.
+
+### Why this matters
+Standard OS traversal (`ReadDirectoryChanges`, `FindFirstFile`) on a 6.54 TB mechanical HDD takes 7–15 minutes for 2M files. MFT-direct reading completes the same job in under 60 seconds on the same hardware.
+
+### Technical approach
+- The NTFS MFT lives at a fixed location on every NTFS volume (`$MFT`)
+- Reading it requires opening the volume handle with `CreateFileW(\\.\H:, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, ...)` as an Administrator
+- The MFT is then read in 1 MB chunks; each entry (1 KB) is parsed to extract: file reference number, parent reference, file name, size, timestamps, flags
+- A second pass reconstructs the full path tree from the parent reference chain
+- This produces the complete file listing in seconds with zero directory I/O
+
+### Design constraints
+- **Requires elevation**: Must open volume with `SeManageVolumePrivilege`. Implemented as a one-time UAC prompt before the scan begins. The standard scan mode remains the default.
+- **NTFS only**: Falls back to standard traversal for FAT32, exFAT, ReFS volumes automatically
+- **Windows only**: No Linux/macOS MFT equivalent — this is already Windows-only code
+- **Read-only**: Only reads MFT entries, never writes to the volume
+
+### UI
+- "⚡ Fast Scan (requires Administrator)" button alongside the standard scan button
+- UAC prompt fires before the scan begins
+- Clear note that the fast scan reads NTFS volume records directly
+
+### Done when (if scheduled)
+- [ ] `detect_volume_filesystem(mount_path) -> FilesystemType` helper returns `Ntfs | Fat32 | ExFat | Refs`
+- [ ] Fast scan button visible only on NTFS sources
+- [ ] UAC elevation prompt fires before the scan starts
+- [ ] MFT reader parses file reference, parent reference, file name, size, timestamps
+- [ ] Path reconstruction from parent reference chain produces correct `volume_relative_path`
+- [ ] Results feed into the same `file_instances` insert pipeline as Stage 1
+- [ ] Fallback to standard traversal if elevation is denied
 
 ---
 
 ## Epic 3 completion criteria (from epics.md)
-- [ ] stage 1 inventory produces visible library records quickly
-- [ ] progress is visible by source
-- [ ] rescans update existing catalog state
-- [ ] source disappearance does not destroy catalog knowledge
+
+- [x] Stage 1 inventory produces visible library records quickly
+- [x] Progress is visible by source
+- [ ] Rescans update existing catalog state *(rescan deduplication via INSERT OR IGNORE is implemented; changed-file detection is Epic 3 follow-on)*
+- [ ] Source disappearance does not destroy catalog knowledge *(soft-delete via `deleted_at` is in schema; rescan detection not yet wired)*

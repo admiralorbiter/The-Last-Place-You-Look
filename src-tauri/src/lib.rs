@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(services::pipeline::PipelineManager::new())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -32,6 +33,9 @@ pub fn run() {
             commands::sources::add_storage_source,
             commands::sources::remove_storage_source,
             commands::sources::list_storage_sources,
+            commands::pipeline::start_scan,
+            commands::pipeline::get_scan_status,
+            commands::pipeline::cancel_scan
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

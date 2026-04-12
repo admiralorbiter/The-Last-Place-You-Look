@@ -39,13 +39,13 @@ All subsequent phases depend on Phase 0. Do not begin Phase 1 until source regis
 Scanning works. A user can start a scan on registered sources and browse the resulting catalog in a unified library.
 
 ### Done when
-- Stage 1 inventory produces visible library records before hash enrichment finishes
-- Scan progress is visible per source and per stage
-- Library search works across cataloged items
-- Filter by type, source, and basic attributes works
-- Offline items remain in library with clear status
-- Rescan detects new, changed, and removed files without destroying existing catalog state
-- Temporarily offline sources do not trigger catalog data deletion
+- [x] Stage 1 inventory produces visible library records before hash enrichment finishes
+- [x] Scan progress is visible per source and per stage (live file count, byte progress, animated bar)
+- [ ] Library search works across cataloged items *(Epic 4)*
+- [ ] Filter by type, source, and basic attributes works *(Epic 4)*
+- [ ] Offline items remain in library with clear status *(Epic 4)*
+- [ ] Rescan detects new, changed, and removed files without destroying existing catalog state
+- [x] Temporarily offline sources do not trigger catalog data deletion *(INSERT OR IGNORE + soft-delete field)*
 
 ### Dependency note
 Epics 3 and 4 can be developed in parallel once the file instance schema (from Epic 3) is stable enough to query from the library view.
