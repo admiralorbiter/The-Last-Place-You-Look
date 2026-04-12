@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useAppStore } from "./stores/appStore";
+import { Sources } from "./pages/Sources";
 import "./App.css";
 
 interface AppInfo {
@@ -30,7 +31,7 @@ function App() {
   }, [setAppReady, setAppVersion, setDbStatus]);
 
   return (
-    <main className="container" style={{ padding: '2rem', textAlign: 'left' }}>
+    <main className="container" style={{ padding: '2rem', textAlign: 'left', maxWidth: '800px', margin: '0 auto' }}>
       <h1>The Last Place You Look</h1>
       
       <div style={{ marginTop: '2rem', padding: '1rem', border: '1px solid #ccc', borderRadius: '8px' }}>
@@ -39,6 +40,8 @@ function App() {
         <p><strong>Version:</strong> {appVersion || "Loading..."}</p>
         <p><strong>Database:</strong> {dbStatus === "ok" ? "✅ Connected" : (dbStatus || "Loading...")}</p>
       </div>
+
+      <Sources />
     </main>
   );
 }

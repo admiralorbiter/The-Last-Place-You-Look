@@ -10,7 +10,19 @@ pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {
 
     let migrations = Migrations::new(vec![
         M::up("-- M001: baseline (empty)"),
-        // M002 and beyond added in Stage 4
+        M::up("
+            CREATE TABLE storage_sources (
+                id                     TEXT PRIMARY KEY,
+                display_name           TEXT NOT NULL,
+                source_kind            TEXT NOT NULL,
+                stable_volume_identity TEXT NOT NULL UNIQUE,
+                current_mount_path     TEXT,
+                currently_mounted      INTEGER NOT NULL DEFAULT 0,
+                quarantine_root        TEXT,
+                created_at             TEXT NOT NULL,
+                removed_at             TEXT
+            );
+        "),
     ]);
 
     migrations.to_latest(&mut conn)
