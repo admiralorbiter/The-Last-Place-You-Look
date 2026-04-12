@@ -407,29 +407,3 @@ fn insert_batch(conn: &mut Connection, batch: &[FileRecord]) -> Result<i32, rusq
     tx.commit()?;
     Ok(inserted)
 }
-
-fn fail_job(app: &AppHandle, pipeline: &PipelineManager, db_path: &Path, source_id: &str, job_id: &str, error: &str) {
-    let progress = ScanProgress {
-        source_id: source_id.to_string(),
-        status: "failed".into(),
-        stage: 1,
-        files_found: 0,
-        files_inserted: 0,
-        bytes_found: 0,
-        total_used_bytes: 0,
-    };
-
-    {
-        let mut scans = pipeline.active_scans.lock().unwrap();
-        scans.insert(source_id.to_string(), progress.clone());
-    }
-
-    if let Ok(conn) = Connection::open(db_path) {
-        let _ = conn.execute(
-            "UPDATE scan_jobs SET status = 'failed', error_message = ?1 WHERE id = ?2",
-            rusqlite::params![error, job_id],
-        );
-    }
-
-    let _ = app.emit("pipeline://progress", progress);
-}

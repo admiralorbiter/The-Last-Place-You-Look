@@ -8,7 +8,6 @@ pub fn reconcile_mount_status(
 ) -> Result<(), AppError> {
     #[cfg(windows)]
     {
-        use windows::core::PWSTR;
         use windows::Win32::Storage::FileSystem::{FindFirstVolumeW, FindNextVolumeW, FindVolumeClose, GetVolumePathNamesForVolumeNameW};
         use std::collections::HashMap;
 
@@ -55,8 +54,6 @@ pub fn reconcile_mount_status(
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
-
-        let now = chrono::Utc::now().to_rfc3339();
 
         for row in rows {
             let (id, guid) = row?;

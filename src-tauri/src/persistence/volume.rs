@@ -2,7 +2,6 @@ use crate::errors::AppError;
 
 #[cfg(windows)]
 pub fn resolve_volume_guid(path: &std::path::Path) -> Result<String, AppError> {
-    use windows::core::PWSTR;
     use windows::Win32::Storage::FileSystem::GetVolumeNameForVolumeMountPointW;
 
     // Path must end with a backslash for the Win32 API

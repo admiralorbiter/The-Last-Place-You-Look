@@ -44,9 +44,9 @@ Build fast inventory-first scanning with background enrichment.
 Provide one browse/search surface across all registered sources.
 
 ### Completion criteria
-- search works across cataloged items
-- filters and sorts are usable
-- offline items remain visible with clear status
+- [x] search works across cataloged items
+- [x] filters and sorts are usable
+- [x] offline items remain visible with clear status
 
 ---
 

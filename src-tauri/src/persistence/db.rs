@@ -69,6 +69,45 @@ pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {
                 error_message TEXT
             );
         "),
+        M::up("
+            -- M005: 5 critical indexes for sorting and filtering
+            CREATE INDEX idx_file_instances_modified ON file_instances(modified_at DESC);
+            CREATE INDEX idx_file_instances_size     ON file_instances(size_bytes DESC);
+            CREATE INDEX idx_file_instances_name     ON file_instances(file_name COLLATE NOCASE);
+            CREATE INDEX idx_file_instances_ext      ON file_instances(extension);
+            
+            -- Partial index for only live files
+            CREATE INDEX idx_file_instances_alive    ON file_instances(source_id, deleted_at) WHERE deleted_at IS NULL;
+            
+            -- Standard autonomous FTS5 table
+            CREATE VIRTUAL TABLE file_search USING fts5(
+                file_name,
+                volume_relative_path,
+                content='file_instances',
+                content_rowid='rowid'
+            );
+            
+            -- Triggers to keep FTS5 in sync with file_instances automatically
+            CREATE TRIGGER fts_sync_insert AFTER INSERT ON file_instances BEGIN
+              INSERT INTO file_search(rowid, file_name, volume_relative_path)
+              VALUES (new.rowid, new.file_name, new.volume_relative_path);
+            END;
+
+            CREATE TRIGGER fts_sync_delete AFTER DELETE ON file_instances BEGIN
+              DELETE FROM file_search WHERE rowid = old.rowid;
+            END;
+
+            CREATE TRIGGER fts_sync_update AFTER UPDATE ON file_instances BEGIN
+              INSERT INTO file_search(file_search, rowid, file_name, volume_relative_path)
+              VALUES ('delete', old.rowid, old.file_name, old.volume_relative_path);
+              INSERT INTO file_search(rowid, file_name, volume_relative_path)
+              VALUES (new.rowid, new.file_name, new.volume_relative_path);
+            END;
+            
+            -- Populate search table for existing records
+            INSERT INTO file_search (rowid, file_name, volume_relative_path)
+                SELECT rowid, file_name, volume_relative_path FROM file_instances;
+        "),
     ]);
 
     migrations.to_latest(&mut conn)

@@ -21,8 +21,13 @@ pub fn run() {
             let arc_conn = Arc::new(Mutex::new(conn));
             app.manage(arc_conn.clone());
             
-            services::sources::reconcile_mount_status(&arc_conn.lock().unwrap(), app.handle())
-                .expect("failed to reconcile mounts on startup");
+            // Reconcile mount status — non-fatal if it fails (e.g. on first run or schema issues)
+            match services::sources::reconcile_mount_status(&arc_conn.lock().unwrap(), app.handle()) {
+                Ok(_) => {},
+                Err(e) => {
+                    eprintln!("[WARN] reconcile_mount_status failed on startup: {:?}", e);
+                }
+            }
             
             app.emit("app://ready", ()).ok();
             
@@ -35,7 +40,11 @@ pub fn run() {
             commands::sources::list_storage_sources,
             commands::pipeline::start_scan,
             commands::pipeline::get_scan_status,
-            commands::pipeline::cancel_scan
+            commands::pipeline::cancel_scan,
+            commands::library::list_library,
+            commands::library::search_library,
+            commands::library::get_library_stats,
+            commands::os::reveal_in_explorer
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
