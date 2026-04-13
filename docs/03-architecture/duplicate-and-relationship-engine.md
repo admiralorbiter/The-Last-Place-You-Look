@@ -53,12 +53,19 @@ Candidate signals for likely best copy:
 - more user markings / collection membership
 - better location semantics (for example not in temp/export/trash-like folders)
 
+## Noise Exclusion Engine
+To prevent duplicate review from being overwhelmed by system artifacts (like Steam game assets or npm node_modules), the engine implements a real-time exclusion layer:
+- **Folder Exclusion (Scoped)**: Suppresses trees on a specific drive (e.g. `Games\SteamLibrary` on source ID `A`).
+- **Filename Exclusion (Global)**: Suppresses specific system artifacts globally (e.g. `stringified.d.ts`).
+- **Extension Exclusion (Global)**: Suppresses broad classes of unhelpful duplicates globally (e.g. `.d.ts`).
+Exclusions are evaluated at query time via `NOT EXISTS` filters in the Confirmed and Probable CTEs, ensuring the data is preserved but completely hidden from the duplicate lifecycle.
+
 ## Intentional backup handling
-A user should be able to mark copies or folders as intentional mirrors/backups.
+A user should be able to mark copies or folders as intentional mirrors/backups using the **☁ Backup** toggle.
 That state must affect:
-- recommendation language
-- cleanup suggestions
-- protection evaluation
+- recommendation language (a backup copy won't be flagged as an accidental duplicate)
+- visual distinctiveness in the review UI (blue border and badge)
+- protection evaluation (ensuring 2+ copies exist across different physical drives)
 
 ## Relationship maps in MVP
 ### Duplicate group map
@@ -85,7 +92,8 @@ Optional in MVP if schedule allows. Should remain focused, not global.
 - [x] Verify Hash action promotes a probable group to confirmed or dismisses it if files differ
 - [x] Recommendation is computed per group from fixed ranking signals (source type, path depth, path length)
 - [x] User can pin a preferred copy; pin persists as `preferred_copy = 1` on `file_instances` and survives rescans
-- [ ] Intentional backups can be distinguished from accidental duplicates
+- [x] User can create exclusion rules (folder, filename, extension) to clear noise from the duplicate review view
+- [x] Intentional backups can be marked per-file and are visually distinct from accidental duplicates
 - [ ] Group review supports user confirmation before destructive action
 - [ ] Relationship map is readable and scoped
 

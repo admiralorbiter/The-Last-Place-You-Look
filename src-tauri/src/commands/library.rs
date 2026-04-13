@@ -404,10 +404,12 @@ pub struct DuplicateGroupMember {
     pub file_name: String,
     pub current_path: Option<String>,
     pub volume_relative_path: String,
+    pub source_id: String,
     pub source_name: String,
     pub source_kind: String,
     pub size_bytes: i64,
     pub preferred_copy: bool,
+    pub is_intentional_backup: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -486,7 +488,7 @@ pub async fn list_duplicate_groups(
 
         // ── Confirmed groups ─────────────────────────────────────────────
         // Uses idx_dupes_confirmed (blake3_hash, file_name) partial index
-        let confirmed_rows: Vec<(String, String, i64, String, String, Option<String>, String, String, i64, i32)> = {
+        let confirmed_rows: Vec<(String, String, i64, String, String, Option<String>, String, String, String, i64, i32, i32)> = {
             let mut stmt = conn.prepare(
                 "WITH dup_hashes AS (
                     SELECT blake3_hash
@@ -494,17 +496,50 @@ pub async fn list_duplicate_groups(
                     WHERE deleted_at IS NULL
                       AND blake3_hash IS NOT NULL
                       AND blake3_hash != ''
+                      AND NOT EXISTS (
+                          SELECT 1 FROM excluded_paths ep
+                          WHERE
+                            -- folder prefix: scoped to source
+                            (ep.pattern_type = 'folder'
+                             AND ep.source_id = file_instances.source_id
+                             AND file_instances.volume_relative_path LIKE ep.volume_path_prefix || '%')
+                            OR
+                            -- exact filename: global or scoped
+                            (ep.pattern_type = 'file_name'
+                             AND file_instances.file_name = ep.volume_path_prefix
+                             AND (ep.source_id IS NULL OR ep.source_id = file_instances.source_id))
+                            OR
+                            -- extension: global or scoped
+                            (ep.pattern_type = 'extension'
+                             AND file_instances.file_name LIKE '%' || ep.volume_path_prefix
+                             AND (ep.source_id IS NULL OR ep.source_id = file_instances.source_id))
+                      )
                     GROUP BY blake3_hash
                     HAVING COUNT(*) > 1
                 )
                 SELECT f.blake3_hash, f.file_name, f.size_bytes,
                        f.id, s.display_name, f.current_path,
-                       f.volume_relative_path, s.source_kind,
-                       f.size_bytes, f.preferred_copy
+                       f.volume_relative_path, s.source_kind, f.source_id,
+                       f.size_bytes, f.preferred_copy, f.is_intentional_backup
                 FROM file_instances f
                 JOIN storage_sources s ON s.id = f.source_id
                 JOIN dup_hashes d      ON d.blake3_hash = f.blake3_hash
                 WHERE f.deleted_at IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM excluded_paths ep
+                      WHERE
+                        (ep.pattern_type = 'folder'
+                         AND ep.source_id = f.source_id
+                         AND f.volume_relative_path LIKE ep.volume_path_prefix || '%')
+                        OR
+                        (ep.pattern_type = 'file_name'
+                         AND f.file_name = ep.volume_path_prefix
+                         AND (ep.source_id IS NULL OR ep.source_id = f.source_id))
+                        OR
+                        (ep.pattern_type = 'extension'
+                         AND f.file_name LIKE '%' || ep.volume_path_prefix
+                         AND (ep.source_id IS NULL OR ep.source_id = f.source_id))
+                  )
                 ORDER BY f.blake3_hash, f.file_name"
             ).map_err(|e| AppError::DatabaseError(e.to_string()))?;
             let x: Vec<_> = stmt.query_map([], |row| {
@@ -512,7 +547,7 @@ pub async fn list_duplicate_groups(
                     row.get(0)?, row.get(1)?, row.get(2)?,
                     row.get(3)?, row.get(4)?, row.get(5)?,
                     row.get(6)?, row.get(7)?, row.get(8)?,
-                    row.get(9)?,
+                    row.get(9)?, row.get(10)?, row.get(11)?,
                 ))
             }).map_err(|e| AppError::DatabaseError(e.to_string()))?.flatten().collect();
             x
@@ -521,7 +556,7 @@ pub async fn list_duplicate_groups(
         let mut confirmed_map: std::collections::HashMap<String, DuplicateGroup> = Default::default();
         let mut total_recoverable_bytes = 0i64;
 
-        for (hash, f_name, size, id, src_name, cur_path, vol_path, src_kind, sz, pref) in confirmed_rows {
+        for (hash, f_name, size, id, src_name, cur_path, vol_path, src_kind, src_id, sz, pref, backup) in confirmed_rows {
             let group = confirmed_map.entry(hash.clone()).or_insert_with(|| DuplicateGroup {
                 group_id: format!("conf_{}", hash),
                 confidence: "confirmed".into(),
@@ -535,10 +570,12 @@ pub async fn list_duplicate_groups(
                 file_name: group.file_name.clone(),
                 current_path: cur_path,
                 volume_relative_path: vol_path,
+                source_id: src_id,
                 source_name: src_name,
                 source_kind: src_kind,
                 size_bytes: sz,
                 preferred_copy: pref > 0,
+                is_intentional_backup: backup > 0,
             });
         }
 
@@ -553,7 +590,7 @@ pub async fn list_duplicate_groups(
 
         // ── Probable groups ──────────────────────────────────────────────
         // Uses idx_dupes_probable (file_name, size_bytes, id) partial index
-        let probable_rows: Vec<(String, i64, String, String, Option<String>, String, String, i64, i32)> = {
+        let probable_rows: Vec<(String, i64, String, String, Option<String>, String, String, String, i64, i32, i32)> = {
             let mut stmt = conn.prepare(
                 "WITH dup_keys AS (
                     -- 512KB floor: skip icons, configs, thumbnails — only meaningful files
@@ -562,13 +599,28 @@ pub async fn list_duplicate_groups(
                     WHERE deleted_at IS NULL
                       AND (blake3_hash IS NULL OR blake3_hash = '')
                       AND size_bytes >= 524288
+                      AND NOT EXISTS (
+                          SELECT 1 FROM excluded_paths ep
+                          WHERE
+                            (ep.pattern_type = 'folder'
+                             AND ep.source_id = file_instances.source_id
+                             AND file_instances.volume_relative_path LIKE ep.volume_path_prefix || '%')
+                            OR
+                            (ep.pattern_type = 'file_name'
+                             AND file_instances.file_name = ep.volume_path_prefix
+                             AND (ep.source_id IS NULL OR ep.source_id = file_instances.source_id))
+                            OR
+                            (ep.pattern_type = 'extension'
+                             AND file_instances.file_name LIKE '%' || ep.volume_path_prefix
+                             AND (ep.source_id IS NULL OR ep.source_id = file_instances.source_id))
+                      )
                     GROUP BY file_name, size_bytes
                     HAVING COUNT(*) > 1
                 )
                 SELECT f.file_name, f.size_bytes,
                        f.id, s.display_name, f.current_path,
-                       f.volume_relative_path, s.source_kind,
-                       f.size_bytes, f.preferred_copy
+                       f.volume_relative_path, s.source_kind, f.source_id,
+                       f.size_bytes, f.preferred_copy, f.is_intentional_backup
                 FROM file_instances f
                 JOIN storage_sources s ON s.id = f.source_id
                 JOIN dup_keys dk ON dk.file_name = f.file_name
@@ -576,6 +628,21 @@ pub async fn list_duplicate_groups(
                 WHERE f.deleted_at IS NULL
                   AND (f.blake3_hash IS NULL OR f.blake3_hash = '')
                   AND f.size_bytes >= 524288
+                  AND NOT EXISTS (
+                      SELECT 1 FROM excluded_paths ep
+                      WHERE
+                        (ep.pattern_type = 'folder'
+                         AND ep.source_id = f.source_id
+                         AND f.volume_relative_path LIKE ep.volume_path_prefix || '%')
+                        OR
+                        (ep.pattern_type = 'file_name'
+                         AND f.file_name = ep.volume_path_prefix
+                         AND (ep.source_id IS NULL OR ep.source_id = f.source_id))
+                        OR
+                        (ep.pattern_type = 'extension'
+                         AND f.file_name LIKE '%' || ep.volume_path_prefix
+                         AND (ep.source_id IS NULL OR ep.source_id = f.source_id))
+                  )
                 ORDER BY f.size_bytes DESC, f.file_name
                 LIMIT 2000"
             ).map_err(|e| AppError::DatabaseError(e.to_string()))?;
@@ -584,14 +651,14 @@ pub async fn list_duplicate_groups(
                     row.get(0)?, row.get(1)?,
                     row.get(2)?, row.get(3)?, row.get(4)?,
                     row.get(5)?, row.get(6)?, row.get(7)?,
-                    row.get(8)?,
+                    row.get(8)?, row.get(9)?, row.get(10)?,
                 ))
             }).map_err(|e| AppError::DatabaseError(e.to_string()))?.flatten().collect();
             x
         };
 
         let mut probable_map: std::collections::HashMap<(String, i64), DuplicateGroup> = Default::default();
-        for (f_name, size, id, src_name, cur_path, vol_path, src_kind, sz, pref) in probable_rows {
+        for (f_name, size, id, src_name, cur_path, vol_path, src_kind, src_id, sz, pref, backup) in probable_rows {
             let key = (f_name.clone(), size);
             let group = probable_map.entry(key).or_insert_with(|| DuplicateGroup {
                 group_id: format!("prob_{}_{}", f_name, size),
@@ -606,10 +673,12 @@ pub async fn list_duplicate_groups(
                 file_name: f_name,
                 current_path: cur_path,
                 volume_relative_path: vol_path,
+                source_id: src_id,
                 source_name: src_name,
                 source_kind: src_kind,
                 size_bytes: sz,
                 preferred_copy: pref > 0,
+                is_intentional_backup: backup > 0,
             });
         }
 
@@ -715,3 +784,95 @@ pub async fn verify_probable_group(
     Ok(all_match)
 }
 
+// ── Folder exclusion commands ────────────────────────────────────────────────
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ExcludedPath {
+    pub id: String,
+    pub source_id: Option<String>,
+    pub source_name: Option<String>,
+    pub volume_path_prefix: String,
+    pub pattern_type: String,
+    pub label: Option<String>,
+    pub created_at: String,
+}
+
+#[tauri::command]
+pub async fn add_excluded_path(
+    db: State<'_, Arc<Mutex<Connection>>>,
+    source_id: Option<String>,   // None = applies globally (all sources)
+    volume_path_prefix: String,
+    pattern_type: String,         // 'folder' | 'file_name' | 'extension'
+    label: Option<String>,
+) -> Result<String, AppError> {
+    let conn = db.lock().unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    // For folder type: strip trailing separators so LIKE prefix% works uniformly
+    let value = if pattern_type == "folder" {
+        volume_path_prefix.trim_end_matches(['/', '\\']).to_string()
+    } else {
+        volume_path_prefix
+    };
+    let kind = match pattern_type.as_str() {
+        "file_name" | "extension" => pattern_type,
+        _ => "folder".to_string(),
+    };
+    conn.execute(
+        "INSERT INTO excluded_paths (id, source_id, volume_path_prefix, pattern_type, label, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![id, source_id, value, kind, label, now],
+    )?;
+    Ok(id)
+}
+
+#[tauri::command]
+pub async fn remove_excluded_path(
+    db: State<'_, Arc<Mutex<Connection>>>,
+    id: String,
+) -> Result<(), AppError> {
+    let conn = db.lock().unwrap();
+    conn.execute("DELETE FROM excluded_paths WHERE id = ?", rusqlite::params![id])?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_excluded_paths(
+    db: State<'_, Arc<Mutex<Connection>>>,
+) -> Result<Vec<ExcludedPath>, AppError> {
+    let conn = db.lock().unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT ep.id, ep.source_id, s.display_name, ep.volume_path_prefix, ep.pattern_type, ep.label, ep.created_at
+         FROM excluded_paths ep
+         LEFT JOIN storage_sources s ON s.id = ep.source_id
+         ORDER BY ep.created_at DESC"
+    )?;
+    let rows: Vec<ExcludedPath> = stmt.query_map([], |row| {
+        Ok(ExcludedPath {
+            id: row.get(0)?,
+            source_id: row.get(1)?,
+            source_name: row.get(2)?,
+            volume_path_prefix: row.get(3)?,
+            pattern_type: row.get(4)?,
+            label: row.get(5)?,
+            created_at: row.get(6)?,
+        })
+    })?.flatten().collect();
+    Ok(rows)
+}
+
+// ── Intentional backup command ───────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn set_intentional_backup(
+    db: State<'_, Arc<Mutex<Connection>>>,
+    file_id: String,
+    is_backup: bool,
+) -> Result<(), AppError> {
+    let conn = db.lock().unwrap();
+    conn.execute(
+        "UPDATE file_instances SET is_intentional_backup = ?1 WHERE id = ?2",
+        rusqlite::params![is_backup as i32, file_id],
+    )?;
+    Ok(())
+}

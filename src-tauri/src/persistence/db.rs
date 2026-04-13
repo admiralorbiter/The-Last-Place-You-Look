@@ -132,6 +132,26 @@ pub fn init_db(app_data_dir: &Path) -> Result<Connection, AppError> {
                 WHERE deleted_at IS NULL
                   AND (blake3_hash IS NULL OR blake3_hash = '');
         "),
+        M::up("
+            -- M009: Folder exclusions and intentional backup flag
+            CREATE TABLE excluded_paths (
+                id                   TEXT PRIMARY KEY,
+                source_id            TEXT REFERENCES storage_sources(id),
+                volume_path_prefix   TEXT NOT NULL,
+                label                TEXT,
+                created_at           TEXT NOT NULL
+            );
+            CREATE INDEX idx_excluded_paths_source ON excluded_paths(source_id);
+
+            ALTER TABLE file_instances ADD COLUMN is_intentional_backup INTEGER NOT NULL DEFAULT 0;
+        "),
+        M::up("
+            -- M010: Extend excluded_paths with pattern_type for name/extension filtering
+            -- pattern_type: 'folder'     -> match volume_path_prefix against volume_relative_path
+            --               'file_name'  -> match volume_path_prefix against file_name (exact)
+            --               'extension'  -> match volume_path_prefix against file extension (LIKE)
+            ALTER TABLE excluded_paths ADD COLUMN pattern_type TEXT NOT NULL DEFAULT 'folder';
+        "),
     ]);
 
     migrations.to_latest(&mut conn)

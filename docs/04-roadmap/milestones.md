@@ -68,7 +68,8 @@ The core product value is complete. A user can identify duplicates, see an expla
 - [x] Likely best copy recommendation is visible with a ranked explanation (source type, path depth, path length signals)
 - [x] Fixed internal ranking signals are implemented (not user-tunable in MVP)
 - [x] User can pin a preferred copy; pin persists across rescans
-- [ ] Intentional backup can be marked and is distinct from accidental duplicate in UI
+- [x] Intentional backup can be marked and is visually distinct (☁ Backup badge)
+- [x] Rule-based noise exclusion engine handles folder prefixes, exact filenames, and extensions
 
 ### Dependency note
 Epic 6 requires hashing from Epic 3. Epic 5 requires file instance records from Epic 3. Both can begin once Phase 1 (Epic 3) is stable.

@@ -69,6 +69,8 @@ Detect exact duplicates and recommend likely best copies with explanation.
 - [x] exact duplicate grouping works
 - [x] duplicate review view exists
 - [x] recommendation shows why and what differs
+- [x] rule-based noise exclusion (folder, filename, extension)
+- [x] intentional backups can be explicitly marked
 
 ---
 

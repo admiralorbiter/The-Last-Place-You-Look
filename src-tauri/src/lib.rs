@@ -56,6 +56,10 @@ pub fn run() {
             commands::library::set_preferred_copy,
             commands::library::set_duplicate_note,
             commands::library::verify_probable_group,
+            commands::library::add_excluded_path,
+            commands::library::remove_excluded_path,
+            commands::library::list_excluded_paths,
+            commands::library::set_intentional_backup,
             commands::os::reveal_in_explorer
         ])
         .run(tauri::generate_context!())
