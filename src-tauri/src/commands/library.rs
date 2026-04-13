@@ -876,3 +876,321 @@ pub async fn set_intentional_backup(
     )?;
     Ok(())
 }
+
+// ── Folder Cluster Analysis ──────────────────────────────────────────────────
+
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher, DefaultHasher};
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct FolderCluster {
+    pub id: String,
+    pub folder_a: FolderSide,
+    pub folder_b: FolderSide,
+    pub similarity: f64,
+    pub jaccard: f64,
+    pub common_files: usize,
+    pub common_bytes: u64,
+    pub child_cluster_count: usize,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct FolderSide {
+    pub source_id: String,
+    pub source_name: String,
+    pub folder_path: String,
+    pub file_count: usize,
+    pub total_bytes: u64,
+    pub only_here: Vec<DiffFile>,
+    pub only_here_total: usize,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct DiffFile {
+    pub file_name: String,
+    pub size_bytes: u64,
+    pub volume_relative_path: String,
+}
+
+#[derive(Clone, Default)]
+struct FolderProfile {
+    source_id: String,
+    source_name: String,
+    folder_path: String,
+    files: Vec<DiffFile>,
+    total_bytes: u64,
+    file_count: usize,
+}
+
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut d = vec![vec![0; b.len() + 1]; a.len() + 1];
+    for i in 0..=a.len() { d[i][0] = i; }
+    for j in 0..=b.len() { d[0][j] = j; }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            d[i][j] = (d[i - 1][j] + 1)
+                .min(d[i][j - 1] + 1)
+                .min(d[i - 1][j - 1] + cost);
+        }
+    }
+    d[a.len()][b.len()]
+}
+
+fn name_similarity(a: &str, b: &str) -> f64 {
+    if a.is_empty() && b.is_empty() { return 1.0; }
+    let a_leaf = a.split(&['/', '\\']).last().unwrap_or(a);
+    let b_leaf = b.split(&['/', '\\']).last().unwrap_or(b);
+    let max_len = a_leaf.chars().count().max(b_leaf.chars().count());
+    if max_len == 0 { return 1.0; }
+    let dist = levenshtein(a_leaf, b_leaf);
+    1.0 - (dist as f64 / max_len as f64)
+}
+
+fn path_depth(path: &str) -> usize {
+    path.chars().filter(|c| *c == '/' || *c == '\\').count()
+}
+
+fn is_ancestor(ancestor: &str, child: &str) -> bool {
+    if ancestor.is_empty() { return true; }
+    let a = ancestor.replace("\\", "/");
+    let c = child.replace("\\", "/");
+    c == a || c.starts_with(&format!("{}/", a))
+}
+
+#[tauri::command]
+pub async fn analyze_folder_clusters(
+    db: State<'_, Arc<Mutex<Connection>>>,
+    min_similarity: f64,
+    min_files: usize,
+) -> Result<Vec<FolderCluster>, AppError> {
+    println!("analyze_folder_clusters: Started with min_sim={}, min_files={}", min_similarity, min_files);
+    let start_ts = std::time::Instant::now();
+    
+    let conn = db.lock().unwrap();
+    println!("analyze_folder_clusters: Acquired DB lock. Executing query...");
+
+    // 1. Load active files, skipping noise exclusions
+    let mut stmt = conn.prepare(
+        "SELECT f.file_name, f.size_bytes, f.source_id, s.display_name, f.volume_relative_path
+         FROM file_instances f
+         JOIN storage_sources s ON s.id = f.source_id
+         WHERE f.deleted_at IS NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM excluded_paths ep
+               WHERE
+                 (ep.pattern_type = 'folder' AND ep.source_id = f.source_id AND f.volume_relative_path LIKE ep.volume_path_prefix || '%')
+                 OR
+                 (ep.pattern_type = 'file_name' AND f.file_name = ep.volume_path_prefix AND (ep.source_id IS NULL OR ep.source_id = f.source_id))
+                 OR
+                 (ep.pattern_type = 'extension' AND f.file_name LIKE '%' || ep.volume_path_prefix AND (ep.source_id IS NULL OR ep.source_id = f.source_id))
+           )"
+    )?;
+
+    let mut profiles: HashMap<(String, String), FolderProfile> = HashMap::new();
+    let rows: Vec<(String, u64, String, String, String)> = stmt.query_map([], |row| {
+        Ok((row.get(0)?, row.get::<_, i64>(1)? as u64, row.get(2)?, row.get(3)?, row.get(4)?))
+    })?.flatten().collect();
+    
+    println!("analyze_folder_clusters: Query retrieved {} rows. Building profiles...", rows.len());
+
+    for (file_name, size_bytes, source_id, source_name, vol_path) in rows {
+        let sep = if vol_path.contains('\\') { '\\' } else { '/' };
+        let folder_path = match vol_path.rsplit_once(sep) {
+            Some((dir, _)) => dir.to_string(),
+            None => "".to_string(),
+        };
+
+        let fkey = (source_id.clone(), folder_path.clone());
+        let profile = profiles.entry(fkey).or_insert_with(|| FolderProfile {
+            source_id,
+            source_name,
+            folder_path,
+            files: Vec::new(),
+            total_bytes: 0,
+            file_count: 0,
+        });
+
+        profile.files.push(DiffFile { file_name, size_bytes, volume_relative_path: vol_path });
+        profile.total_bytes += size_bytes;
+        profile.file_count += 1;
+    }
+
+    println!("analyze_folder_clusters: Built {} folder profiles. Building inverted index...", profiles.len());
+
+    // 2. Build inverted index
+    // File key -> [Folder keys containing it]
+    let mut inverted_index: HashMap<(String, u64), Vec<(String, String)>> = HashMap::new();
+    for (fkey, profile) in &profiles {
+        if profile.file_count < min_files { continue; }
+        for file in &profile.files {
+            inverted_index.entry((file.file_name.clone(), file.size_bytes)).or_default().push(fkey.clone());
+        }
+    }
+
+    // Tally candidates
+    let mut pair_tallies: HashMap<((String, String), (String, String)), (usize, u64)> = HashMap::new();
+
+    for ((_fi_name, fi_size), folders) in &inverted_index {
+        if folders.len() < 2 { continue; }
+        
+        // Defensive O(N^2) cap: If a single file name+size appears in > 100 unique folders
+        // across the DB, we skip it. This prevents the candidate pair generator from hanging
+        // deeply on things like `.DS_Store`, `__init__.py`, or `.git/objects`.
+        if folders.len() > 100 { continue; }
+
+        for i in 0..folders.len() {
+            for j in (i+1)..folders.len() {
+                let f1 = &folders[i];
+                let f2 = &folders[j];
+                let key = if f1 < f2 { (f1.clone(), f2.clone()) } else { (f2.clone(), f1.clone()) };
+                
+                let tally = pair_tallies.entry(key).or_insert((0, 0));
+                tally.0 += 1;
+                tally.1 += *fi_size;
+            }
+        }
+    }
+    
+    println!("analyze_folder_clusters: Tallied pairs. Scoring candidates...");
+
+    // 3. Score candidates
+    let mut surviving_pairs = Vec::new();
+    let mut evaluation_count = 0;
+    
+    for (pair_key, (common_files, common_bytes)) in pair_tallies {
+        evaluation_count += 1;
+        if common_files < min_files { continue; }
+        let p_a = profiles.get(&pair_key.0).unwrap();
+        let p_b = profiles.get(&pair_key.1).unwrap();
+        
+        let jaccard = common_files as f64 / (p_a.file_count + p_b.file_count - common_files) as f64;
+        let byte_overlap = common_bytes as f64 / (p_a.total_bytes.max(p_b.total_bytes).max(1) as f64);
+        let name_sim = name_similarity(&p_a.folder_path, &p_b.folder_path);
+        
+        let composite = (jaccard * 0.55) + (byte_overlap * 0.35) + (name_sim * 0.10);
+        
+        if composite >= min_similarity {
+            surviving_pairs.push((pair_key, composite, jaccard, common_files, common_bytes));
+        }
+    }
+    
+    println!("analyze_folder_clusters: Evaluated {} valid pairs, {} survived threshold. Rolling up ancestors...", evaluation_count, surviving_pairs.len());
+
+    // 4. Ancestor Roll-Up (Shallowest First)
+    // IMPORTANT: Cap to top 3000 by composite score BEFORE O(N²) roll-up.
+    // With 67k+ candidates this loop would take billions of iterations.
+    surviving_pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    surviving_pairs.truncate(3000);
+    println!("analyze_folder_clusters: Capped to {} pairs for roll-up.", surviving_pairs.len());
+    
+    // Re-sort by depth (shallowest first) for ancestor suppression
+    surviving_pairs.sort_by(|a, b| {
+        let d_a = path_depth(&a.0.0.1) + path_depth(&a.0.1.1);
+        let d_b = path_depth(&b.0.0.1) + path_depth(&b.0.1.1);
+        d_a.cmp(&d_b)
+    });
+
+    let mut accepted_pairs: Vec<( ((String, String), (String, String)), f64, f64, usize, u64, usize)> = Vec::new();
+
+    for pair in surviving_pairs {
+        let mut covered_by_idx = None;
+        for (i, acc) in accepted_pairs.iter().enumerate() {
+            // acc.2 is the jaccard score. If the parent is a perfect match (≥99.9%),
+            // we know all files in both folders are identical. In that case, suppress
+            // any candidate where EITHER side is a descendant — because the other side
+            // is necessarily already implied by the parent's coverage.
+            // For partial-match parents, require BOTH sides to be descendants.
+            let parent_is_perfect = acc.2 >= 0.999;
+
+            if pair.0.0.0 == acc.0.0.0 && pair.0.1.0 == acc.0.1.0 {
+                let a_covered = is_ancestor(&acc.0.0.1, &pair.0.0.1);
+                let b_covered = is_ancestor(&acc.0.1.1, &pair.0.1.1);
+                let suppressed = if parent_is_perfect { a_covered || b_covered } else { a_covered && b_covered };
+                if suppressed { covered_by_idx = Some(i); break; }
+            }
+            if pair.0.0.0 == acc.0.1.0 && pair.0.1.0 == acc.0.0.0 {
+                let a_covered = is_ancestor(&acc.0.1.1, &pair.0.0.1);
+                let b_covered = is_ancestor(&acc.0.0.1, &pair.0.1.1);
+                let suppressed = if parent_is_perfect { a_covered || b_covered } else { a_covered && b_covered };
+                if suppressed { covered_by_idx = Some(i); break; }
+            }
+        }
+        
+        if let Some(idx) = covered_by_idx {
+            accepted_pairs[idx].5 += 1;
+        } else {
+            accepted_pairs.push((pair.0, pair.1, pair.2, pair.3, pair.4, 0));
+        }
+    }
+    
+    println!("analyze_folder_clusters: After roll-up, {} final clusters remain. Generating diffs...", accepted_pairs.len());
+
+    // 5. Generate Diff Response
+    let mut results = Vec::new();
+    for (pair_key, sim, jaccard, common_files, common_bytes, child_count) in accepted_pairs {
+        let p_a = profiles.get(&pair_key.0).unwrap();
+        let p_b = profiles.get(&pair_key.1).unwrap();
+        
+        let set_b: HashSet<_> = p_b.files.iter().map(|f| (f.file_name.clone(), f.size_bytes)).collect();
+        let mut only_in_a: Vec<_> = p_a.files.iter().filter(|f| !set_b.contains(&(f.file_name.clone(), f.size_bytes))).cloned().collect();
+        
+        let set_a: HashSet<_> = p_a.files.iter().map(|f| (f.file_name.clone(), f.size_bytes)).collect();
+        let mut only_in_b: Vec<_> = p_b.files.iter().filter(|f| !set_a.contains(&(f.file_name.clone(), f.size_bytes))).cloned().collect();
+        
+        only_in_a.sort_by_key(|f| std::cmp::Reverse(f.size_bytes));
+        only_in_b.sort_by_key(|f| std::cmp::Reverse(f.size_bytes));
+        
+        let only_here_total_a = only_in_a.len();
+        let only_here_total_b = only_in_b.len();
+        
+        only_in_a.truncate(20);
+        only_in_b.truncate(20);
+        
+        let side_a = FolderSide {
+            source_id: p_a.source_id.clone(),
+            source_name: p_a.source_name.clone(),
+            folder_path: p_a.folder_path.clone(),
+            file_count: p_a.file_count,
+            total_bytes: p_a.total_bytes,
+            only_here: only_in_a,
+            only_here_total: only_here_total_a,
+        };
+        
+        let side_b = FolderSide {
+            source_id: p_b.source_id.clone(),
+            source_name: p_b.source_name.clone(),
+            folder_path: p_b.folder_path.clone(),
+            file_count: p_b.file_count,
+            total_bytes: p_b.total_bytes,
+            only_here: only_in_b,
+            only_here_total: only_here_total_b,
+        };
+        
+        let mut hasher = DefaultHasher::new();
+        pair_key.0.0.hash(&mut hasher);
+        pair_key.0.1.hash(&mut hasher);
+        pair_key.1.0.hash(&mut hasher);
+        pair_key.1.1.hash(&mut hasher);
+        let id = format!("cluster_{:x}", hasher.finish());
+        
+        results.push(FolderCluster {
+            id,
+            folder_a: side_a,
+            folder_b: side_b,
+            similarity: sim,
+            jaccard,
+            common_files,
+            common_bytes,
+            child_cluster_count: child_count,
+        });
+    }
+    
+    results.sort_by(|a, b| b.common_bytes.cmp(&a.common_bytes));
+    
+    let elapsed = start_ts.elapsed();
+    println!("analyze_folder_clusters: Completed successfully in {:?}", elapsed);
+    Ok(results)
+}

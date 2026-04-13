@@ -71,6 +71,7 @@ Detect exact duplicates and recommend likely best copies with explanation.
 - [x] recommendation shows why and what differs
 - [x] rule-based noise exclusion (folder, filename, extension)
 - [x] intentional backups can be explicitly marked
+- [x] folder cluster analysis evaluates and gracefully suppresses redundant structural trees
 
 ---
 

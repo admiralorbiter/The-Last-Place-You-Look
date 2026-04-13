@@ -60,9 +60,9 @@ pub fn run() {
             commands::library::remove_excluded_path,
             commands::library::list_excluded_paths,
             commands::library::set_intentional_backup,
+            commands::library::analyze_folder_clusters,
             commands::os::reveal_in_explorer
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-

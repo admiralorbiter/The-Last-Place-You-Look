@@ -60,6 +60,12 @@ To prevent duplicate review from being overwhelmed by system artifacts (like Ste
 - **Extension Exclusion (Global)**: Suppresses broad classes of unhelpful duplicates globally (e.g. `.d.ts`).
 Exclusions are evaluated at query time via `NOT EXISTS` filters in the Confirmed and Probable CTEs, ensuring the data is preserved but completely hidden from the duplicate lifecycle.
 
+## Folder Cluster Analysis
+Rather than only surfacing individual file matches, the engine natively discovers duplicated directory trees through **Folder Cluster Analysis**. 
+1. **Inverted Index Evaluation**: Active files are mapped to an inverted index to find directories sharing identical files (by name & size). O(N²) computational blowouts are prevented by aggressively dropping low-value noise files that exist in hundreds of unique directories (like `.DS_Store` or empty `__init__.py`).
+2. **Composite Scoring**: Folder pairs are scored based on File Overlap (Jaccard Index), Byte Payload (Total Common Bytes), and Levenshtein Name Similarity. A dynamic Sensitivity bound (Strict/Balanced/Loose) dictates the cutoff.
+3. **Ancestor Roll-Up (Noise Suppression)**: To prevent an overwhelming UI, descendant matches are automatically suppressed in favor of the shallowest meaningful root cluster. If a parent cluster has a 100% match score, any sub-cluster where *either* folder is a descendant is suppressed. For partial matches, *both* must be descendants.
+
 ## Intentional backup handling
 A user should be able to mark copies or folders as intentional mirrors/backups using the **☁ Backup** toggle.
 That state must affect:
@@ -94,7 +100,8 @@ Optional in MVP if schedule allows. Should remain focused, not global.
 - [x] User can pin a preferred copy; pin persists as `preferred_copy = 1` on `file_instances` and survives rescans
 - [x] User can create exclusion rules (folder, filename, extension) to clear noise from the duplicate review view
 - [x] Intentional backups can be marked per-file and are visually distinct from accidental duplicates
-- [ ] Group review supports user confirmation before destructive action
+- [x] Folder Cluster Analysis exposes exact or partial directory tree matches and cleanly suppresses sub-folder noise
+- [ ] Group & Cluster review supports user confirmation before destructive action
 - [ ] Relationship map is readable and scoped
 
 ## Deferred work

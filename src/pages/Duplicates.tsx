@@ -59,6 +59,36 @@ interface ExcludedPath {
   label: string | null;
 }
 
+// ── Folder Cluster Definitions ───────────────────────────────────────────────
+
+interface DiffFile {
+  file_name: string;
+  size_bytes: number;
+  volume_relative_path: string;
+}
+
+interface FolderSide {
+  source_id: string;
+  source_name: string;
+  folder_path: string;
+  file_count: number;
+  total_bytes: number;
+  only_here: DiffFile[];
+  only_here_total: number;
+}
+
+interface FolderCluster {
+  id: string;
+  folder_a: FolderSide;
+  folder_b: FolderSide;
+  similarity: number;
+  jaccard: number;
+  common_files: number;
+  common_bytes: number;
+  child_cluster_count: number;
+}
+
+
 // ── Ignore Panel ─────────────────────────────────────────────────────────────
 // Three modes: ignore by filename, extension, or folder prefix.
 // Folder mode uses a clickable breadcrumb picker; file/ext modes are one-click.
@@ -260,6 +290,14 @@ export function Duplicates() {
   const [showExclusions, setShowExclusions] = useState(false);
   const [ignoringGroupId, setIgnoringGroupId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  
+  // Folder Cluster State
+  const [activeTab, setActiveTab] = useState<'folders' | 'files'>('folders');
+  const [folderClusters, setFolderClusters] = useState<FolderCluster[]>([]);
+  const [sensitivity, setSensitivity] = useState<'Strict' | 'Balanced' | 'Loose'>('Balanced');
+  const [crossDriveOnly, setCrossDriveOnly] = useState(false);
+  const [clusterPhase, setClusterPhase] = useState<'idle' | 'loading' | 'done'>('idle');
+  const [expandedDiffs, setExpandedDiffs] = useState<Set<string>>(new Set());
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -283,6 +321,19 @@ export function Duplicates() {
     }
   };
 
+  const fetchClusters = async () => {
+    try {
+      setClusterPhase('loading');
+      const minSimilarity = sensitivity === 'Strict' ? 0.80 : sensitivity === 'Balanced' ? 0.60 : 0.45;
+      const res = await invoke<FolderCluster[]>('analyze_folder_clusters', { minSimilarity, minFiles: 3 });
+      setFolderClusters(res);
+      setClusterPhase('done');
+    } catch(e) {
+      console.error(e);
+      setClusterPhase('done');
+    }
+  };
+
   const fetchExclusions = async () => {
     try {
       setExclusions(await invoke<ExcludedPath[]>('list_excluded_paths'));
@@ -290,6 +341,7 @@ export function Duplicates() {
   };
 
   useEffect(() => { fetchGroups(); fetchExclusions(); }, []);
+  useEffect(() => { fetchClusters(); }, [sensitivity, exclusions]);
 
   const handleVerify = async (group: DuplicateGroup) => {
     setVerifyingGrps(prev => new Set(prev).add(group.group_id));
@@ -447,25 +499,91 @@ export function Duplicates() {
         </div>
       )}
 
-      {/* Summary Bar */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: '2rem', padding: '1.5rem',
-        backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '12px',
-        marginBottom: '2rem', boxShadow: '0 4px 20px rgba(0,0,0,0.2)'
-      }}>
-        <div style={{ flex: 1 }}>
-          <p style={{ margin: 0, color: '#a1a1aa', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Confirmed Wasted Space</p>
-          <p style={{ margin: '0.2rem 0 0 0', color: '#10b981', fontSize: '1.8rem', fontWeight: 700 }}>{formatBytes(total_recoverable_bytes)}</p>
+      {/* Tabs and Controls */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', borderBottom: '1px solid #27272a', paddingBottom: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          <button
+            onClick={() => setActiveTab('folders')}
+            style={{
+              background: 'transparent', border: 'none', color: activeTab === 'folders' ? '#f4f4f5' : '#71717a',
+              fontSize: '1.1rem', fontWeight: activeTab === 'folders' ? 600 : 400, cursor: 'pointer',
+              borderBottom: activeTab === 'folders' ? '2px solid #8b5cf6' : '2px solid transparent',
+              paddingBottom: '0.4rem', marginBottom: '-0.6rem'
+            }}
+          >
+            📁 Folder Clusters
+          </button>
+          <button
+            onClick={() => setActiveTab('files')}
+            style={{
+              background: 'transparent', border: 'none', color: activeTab === 'files' ? '#f4f4f5' : '#71717a',
+              fontSize: '1.1rem', fontWeight: activeTab === 'files' ? 600 : 400, cursor: 'pointer',
+              borderBottom: activeTab === 'files' ? '2px solid #8b5cf6' : '2px solid transparent',
+              paddingBottom: '0.4rem', marginBottom: '-0.6rem'
+            }}
+          >
+            📄 File Duplicates
+          </button>
         </div>
-        <div style={{ paddingLeft: '2rem', borderLeft: '1px solid #27272a' }}>
-          <p style={{ margin: 0, color: '#a1a1aa', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Confirmed Groups</p>
-          <p style={{ margin: '0.2rem 0 0 0', color: '#e4e4e7', fontSize: '1.4rem', fontWeight: 600 }}>{confirmed.length}</p>
-        </div>
-        <div style={{ paddingLeft: '2rem', borderLeft: '1px solid #27272a' }}>
-          <p style={{ margin: 0, color: '#a1a1aa', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Probable Groups</p>
-          <p style={{ margin: '0.2rem 0 0 0', color: '#e4e4e7', fontSize: '1.4rem', fontWeight: 600 }}>{probable.length}</p>
-        </div>
+
+        {activeTab === 'folders' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#a1a1aa', fontSize: '0.85rem' }}>
+              <input type="checkbox" checked={crossDriveOnly} onChange={e => setCrossDriveOnly(e.target.checked)} />
+              Cross-drive only
+            </label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#a1a1aa', fontSize: '0.85rem' }}>
+              Sensitivity:
+              <select value={sensitivity} onChange={e => setSensitivity(e.target.value as any)} style={{ background: '#27272a', border: '1px solid #3f3f46', color: '#e4e4e7', borderRadius: '4px', padding: '0.15rem 0.5rem' }}>
+                <option value="Strict">Strict (80%)</option>
+                <option value="Balanced">Balanced (60%)</option>
+                <option value="Loose">Loose (45%)</option>
+              </select>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Summary Bar */}
+      {activeTab === 'folders' ? (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '2rem', padding: '1.5rem',
+          backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '12px',
+          marginBottom: '2rem', boxShadow: '0 4px 20px rgba(0,0,0,0.2)'
+        }}>
+          <div style={{ flex: 1 }}>
+            <p style={{ margin: 0, color: '#a1a1aa', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Clusters Found</p>
+            <p style={{ margin: '0.2rem 0 0 0', color: '#8b5cf6', fontSize: '1.8rem', fontWeight: 700 }}>
+              {folderClusters.filter(c => !crossDriveOnly || c.folder_a.source_id !== c.folder_b.source_id).length}
+            </p>
+          </div>
+          <div style={{ paddingLeft: '2rem', borderLeft: '1px solid #27272a' }}>
+            <p style={{ margin: 0, color: '#a1a1aa', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Largest Common Payload</p>
+            <p style={{ margin: '0.2rem 0 0 0', color: '#e4e4e7', fontSize: '1.4rem', fontWeight: 600 }}>
+              {formatBytes(Math.max(0, ...folderClusters.map(c => c.common_bytes)))}
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '2rem', padding: '1.5rem',
+          backgroundColor: '#18181b', border: '1px solid #27272a', borderRadius: '12px',
+          marginBottom: '2rem', boxShadow: '0 4px 20px rgba(0,0,0,0.2)'
+        }}>
+          <div style={{ flex: 1 }}>
+            <p style={{ margin: 0, color: '#a1a1aa', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Confirmed Wasted Space</p>
+            <p style={{ margin: '0.2rem 0 0 0', color: '#10b981', fontSize: '1.8rem', fontWeight: 700 }}>{formatBytes(total_recoverable_bytes)}</p>
+          </div>
+          <div style={{ paddingLeft: '2rem', borderLeft: '1px solid #27272a' }}>
+            <p style={{ margin: 0, color: '#a1a1aa', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Confirmed Groups</p>
+            <p style={{ margin: '0.2rem 0 0 0', color: '#e4e4e7', fontSize: '1.4rem', fontWeight: 600 }}>{confirmed.length}</p>
+          </div>
+          <div style={{ paddingLeft: '2rem', borderLeft: '1px solid #27272a' }}>
+            <p style={{ margin: 0, color: '#a1a1aa', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Probable Groups</p>
+            <p style={{ margin: '0.2rem 0 0 0', color: '#e4e4e7', fontSize: '1.4rem', fontWeight: 600 }}>{probable.length}</p>
+          </div>
+        </div>
+      )}
 
       {showEmptyState && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '4rem 2rem', backgroundColor: '#18181b', border: '1px dashed #3f3f46', borderRadius: '12px' }}>
@@ -476,52 +594,186 @@ export function Duplicates() {
       )}
 
       {/* Group Lists */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-        {confirmed.length > 0 && (
-          <div>
-            <h3 style={{ margin: '0 0 1rem 0', color: '#f4f4f5', fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#ef4444' }}/>
-              Confirmed Exact Duplicates
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {confirmed.map(g => (
-                <DuplicateGroupCard
-                  key={g.group_id} group={g}
-                  onPin={handlePin} onVerify={handleVerify} onToggleBackup={handleToggleBackup}
-                  isIgnoring={ignoringGroupId === g.group_id}
-                  onIgnoreOpen={() => setIgnoringGroupId(g.group_id)}
-                  onIgnoreCancel={() => setIgnoringGroupId(null)}
-                  onIgnoreConfirm={handleIgnoreConfirm}
+      {activeTab === 'folders' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {clusterPhase === 'loading' ? (
+            <p style={{ color: '#a1a1aa' }}>Analyzing folder structures...</p>
+          ) : folderClusters.filter(c => !crossDriveOnly || c.folder_a.source_id !== c.folder_b.source_id).length === 0 ? (
+            <p style={{ color: '#a1a1aa', fontStyle: 'italic' }}>No folder clusters found at current sensitivity.</p>
+          ) : (
+            folderClusters
+              .filter(c => !crossDriveOnly || c.folder_a.source_id !== c.folder_b.source_id)
+              .map(c => (
+                <FolderClusterCard 
+                  key={c.id} 
+                  cluster={c} 
+                  isExpanded={expandedDiffs.has(c.id)}
+                  onToggleExpand={() => {
+                    const n = new Set(expandedDiffs);
+                    if (n.has(c.id)) n.delete(c.id); else n.add(c.id);
+                    setExpandedDiffs(n);
+                  }}
+                  onIgnore={(side) => {
+                     // Add an exclusion rule for this side
+                     handleIgnoreConfirm(side.source_id, side.folder_path, 'folder', side.folder_path.split(/[/\\]/).pop() || 'Folder');
+                  }}
                 />
-              ))}
+              ))
+          )}
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+          {confirmed.length > 0 && (
+            <div>
+              <h3 style={{ margin: '0 0 1rem 0', color: '#f4f4f5', fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#ef4444' }}/>
+                Confirmed Exact Duplicates
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {confirmed.map(g => (
+                  <DuplicateGroupCard
+                    key={g.group_id} group={g}
+                    onPin={handlePin} onVerify={handleVerify} onToggleBackup={handleToggleBackup}
+                    isIgnoring={ignoringGroupId === g.group_id}
+                    onIgnoreOpen={() => setIgnoringGroupId(g.group_id)}
+                    onIgnoreCancel={() => setIgnoringGroupId(null)}
+                    onIgnoreConfirm={handleIgnoreConfirm}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {probable.length > 0 && (
-          <div>
-            <h3 style={{ margin: '0 0 1rem 0', color: '#f4f4f5', fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#f59e0b' }}/>
-              Probable Candidates <span style={{ fontSize: '0.85rem', color: '#71717a', fontWeight: 400 }}>(same name and size, unhashed)</span>
-            </h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {probable.map(g => (
-                <DuplicateGroupCard
-                  key={g.group_id} group={g}
-                  onPin={handlePin} onVerify={handleVerify} onToggleBackup={handleToggleBackup}
-                  isVerifying={verifyingGrps.has(g.group_id)}
-                  verificationResult={justVerified?.id === g.group_id ? justVerified.success : null}
-                  isIgnoring={ignoringGroupId === g.group_id}
-                  onIgnoreOpen={() => setIgnoringGroupId(g.group_id)}
-                  onIgnoreCancel={() => setIgnoringGroupId(null)}
-                  onIgnoreConfirm={handleIgnoreConfirm}
-                />
-              ))}
+          {probable.length > 0 && (
+            <div>
+              <h3 style={{ margin: '0 0 1rem 0', color: '#f4f4f5', fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#f59e0b' }}/>
+                Probable Candidates <span style={{ fontSize: '0.85rem', color: '#71717a', fontWeight: 400 }}>(same name and size, unhashed)</span>
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                {probable.map(g => (
+                  <DuplicateGroupCard
+                    key={g.group_id} group={g}
+                    onPin={handlePin} onVerify={handleVerify} onToggleBackup={handleToggleBackup}
+                    isVerifying={verifyingGrps.has(g.group_id)}
+                    verificationResult={justVerified?.id === g.group_id ? justVerified.success : null}
+                    isIgnoring={ignoringGroupId === g.group_id}
+                    onIgnoreOpen={() => setIgnoringGroupId(g.group_id)}
+                    onIgnoreCancel={() => setIgnoringGroupId(null)}
+                    onIgnoreConfirm={handleIgnoreConfirm}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+// ── Folder Cluster Card ──────────────────────────────────────────────────────
+function FolderClusterCard({ cluster, isExpanded, onToggleExpand, onIgnore }: { 
+  cluster: FolderCluster; 
+  isExpanded: boolean; 
+  onToggleExpand: () => void;
+  onIgnore: (side: FolderSide) => void;
+}) {
+  const { folder_a, folder_b } = cluster;
+  
+  return (
+    <div style={{
+      backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: '10px', overflow: 'hidden',
+    }}>
+      {/* Header */}
+      <div style={{ padding: '1rem 1.25rem', backgroundColor: 'rgba(139,92,246,0.03)', borderBottom: '1px solid #27272a' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <span style={{ fontSize: '1.2rem' }}>📁</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.2rem' }}>
+              <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#e4e4e7' }}>FOLDER CLUSTER</span>
+              <span style={{ color: '#8b5cf6', fontSize: '0.85rem', fontWeight: 600 }}>{Math.round(cluster.similarity * 100)}% match</span>
+            </div>
+            <div style={{ color: '#71717a', fontSize: '0.8rem', display: 'flex', gap: '0.75rem' }}>
+              <span>{cluster.common_files} common files ({formatBytes(cluster.common_bytes)})</span>
+              {cluster.child_cluster_count > 0 && <span>&bull; Rolled up {cluster.child_cluster_count} sub-folder matches</span>}
             </div>
           </div>
-        )}
+        </div>
       </div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      
+      {/* Sides */}
+      <div style={{ padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        {[folder_a, folder_b].map((side, idx) => (
+          <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={{ padding: '0.15rem 0.4rem', backgroundColor: '#27272a', borderRadius: '4px', fontSize: '0.75rem', color: '#a1a1aa' }}>
+              {side.source_name}
+            </span>
+            <span style={{ color: '#d4d4d8', fontFamily: 'monospace', fontSize: '0.85rem' }}>{side.folder_path || '/ (Root)'}</span>
+            <span style={{ color: '#52525b', fontSize: '0.8rem', marginLeft: 'auto' }}>
+              {side.file_count} items ({formatBytes(side.total_bytes)})
+            </span>
+            <button
+               onClick={() => onIgnore(side)}
+               title="Exclude this folder from duplicates"
+               style={{ background: 'transparent', border: '1px solid #3f3f46', color: '#71717a', borderRadius: '4px', padding: '0.1rem 0.4rem', cursor: 'pointer', fontSize: '0.75rem' }}
+            >⊘</button>
+          </div>
+        ))}
+      </div>
+      
+      {/* Diff Toggle */}
+      <div style={{ padding: '0.75rem 1.25rem', backgroundColor: '#27272a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ color: '#10b981', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          ✓ {cluster.common_files} identical files shared
+        </span>
+        <button 
+          onClick={onToggleExpand}
+          style={{ background: 'transparent', border: 'none', color: '#a1a1aa', fontSize: '0.85rem', cursor: 'pointer' }}>
+          {isExpanded ? '▲ Hide diffs' : '▼ View differences'}
+        </button>
+      </div>
+      
+      {/* Expanded Diff Area */}
+      {isExpanded && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', padding: '1rem', backgroundColor: '#18181b' }}>
+          <div>
+            <div style={{ color: '#f59e0b', fontSize: '0.8rem', marginBottom: '0.5rem', fontWeight: 600 }}>
+              Only in {folder_a.source_name}: {folder_a.only_here_total} files
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+              {folder_a.only_here.map((f, i) => (
+                <div key={i} style={{ color: '#a1a1aa', fontSize: '0.75rem', fontFamily: 'monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  + {f.file_name} <span style={{ color: '#52525b' }}>({formatBytes(f.size_bytes)})</span>
+                </div>
+              ))}
+              {folder_a.only_here_total > 20 && (
+                <div style={{ color: '#52525b', fontSize: '0.75rem', fontStyle: 'italic', marginTop: '0.2rem' }}>
+                  ... and {folder_a.only_here_total - 20} more
+                </div>
+              )}
+            </div>
+          </div>
+          <div>
+            <div style={{ color: '#3b82f6', fontSize: '0.8rem', marginBottom: '0.5rem', fontWeight: 600 }}>
+              Only in {folder_b.source_name}: {folder_b.only_here_total} files
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+              {folder_b.only_here.map((f, i) => (
+                <div key={i} style={{ color: '#a1a1aa', fontSize: '0.75rem', fontFamily: 'monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  + {f.file_name} <span style={{ color: '#52525b' }}>({formatBytes(f.size_bytes)})</span>
+                </div>
+              ))}
+              {folder_b.only_here_total > 20 && (
+                <div style={{ color: '#52525b', fontSize: '0.75rem', fontStyle: 'italic', marginTop: '0.2rem' }}>
+                  ... and {folder_b.only_here_total - 20} more
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

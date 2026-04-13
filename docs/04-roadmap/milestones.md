@@ -70,6 +70,7 @@ The core product value is complete. A user can identify duplicates, see an expla
 - [x] User can pin a preferred copy; pin persists across rescans
 - [x] Intentional backup can be marked and is visually distinct (☁ Backup badge)
 - [x] Rule-based noise exclusion engine handles folder prefixes, exact filenames, and extensions
+- [x] Folder cluster analysis exposes duplicate directory trees and cleanly suppresses sub-folder noise
 
 ### Dependency note
 Epic 6 requires hashing from Epic 3. Epic 5 requires file instance records from Epic 3. Both can begin once Phase 1 (Epic 3) is stable.
